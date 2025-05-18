@@ -1,0 +1,28 @@
+{
+  "name": "jotdb",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-05-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "JOTDB",
+        "class_name": "JotDB"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": [
+        "JotDB"
+      ]
+    }
+  ],
+  "build": {
+    "command": "bun run build"
+  },
+  "minify": true
+}

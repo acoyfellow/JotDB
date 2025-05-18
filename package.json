@@ -1,0 +1,17 @@
+{
+  "name": "jotdb",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "bun test jotdb.tests.ts",
+    "build": "bun build src/index.ts --outdir dist",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "zod": "^3.24.4",
+    "@cloudflare/workers-types": "^4.20250517.0",
+    "wrangler": "^4.15.2"
+  }
+}
