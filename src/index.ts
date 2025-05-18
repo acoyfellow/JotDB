@@ -1,5 +1,4 @@
 import { z, ZodTypeAny, ZodObject } from "zod";
-import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { prettyJSON } from 'hono/pretty-json';
@@ -21,7 +20,6 @@ interface AuditLogEntry {
 }
 
 export class JotDB extends DurableObject {
-  private ctx: DurableObjectState;
   private data: Record<string, unknown> = {};
   private rawSchema: SchemaDefinition = {};
   private zodSchema: ZodObject<any> | null = null;
@@ -31,9 +29,8 @@ export class JotDB extends DurableObject {
   };
   private auditLog: AuditLogEntry[] = [];
 
-  constructor(state: DurableObjectState, env: Env) {
+  constructor(state: any, env: Env) {
     super(state, env);
-    this.ctx = state;
   }
 
   async load(): Promise<void> {
@@ -228,6 +225,10 @@ export class JotDB extends DurableObject {
       }
     }
     return z.object(shape);
+  }
+
+  async fetch(request: Request) {
+    return new Response("Hello, World!");
   }
 }
 
