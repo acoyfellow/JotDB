@@ -4,13 +4,17 @@
   "type": "module",
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "wrangler dev --port 5173 --remote",
     "test": "bun test jotdb.tests.ts",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "patch": "npm version patch && npm publish --access public"
   },
   "dependencies": {
     "typescript": "^5.8.3"
