@@ -1,5 +1,5 @@
 import { assert, describe, it, beforeEach } from "bun:test";
-import { JotDB } from "./src/JotDB.ts";
+import { JotDB } from "./src/index.ts";
 
 // Fake DurableObjectState stub for unit testing
 function createFakeState(): any {

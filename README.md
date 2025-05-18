@@ -1,114 +1,211 @@
-# 📝 JotDB
+# JotDB
 
-**JotDB** is a minimal JSON document store built on [Cloudflare Durable Objects](https://developers.cloudflare.com/workers/runtime-apis/durable-objects/), with runtime schema enforcement and audit logging.
+## 🚀 Quick Start: Using JotDB in Your Cloudflare Worker
 
-It behaves like a tiny NoSQL database — perfect for structured key-value use cases, without needing a full Firestore or D1 setup.
-
----
-
-### ✨ Features
-
-- 🔑 Simple `.set(key, value)` / `.get(key)` API
-- 🧠 **Optional schema enforcement** via [Zod](https://github.com/colinhacks/zod)
-- 🚦 Auto-infers schema from first `.setAll()` call
-- ⚠️ Warns on schema diffs (adds, removals, type changes)
-- 🧹 Optional stripping of unknown keys
-- 🔒 Read-only mode
-- 📜 Built-in audit log tracking
-- 🪶 Lightweight, RPC-only architecture (no router or HTTP interface)
-
----
-
-### 🚀 Quick Start
-
-#### Install
+### 1. **Install JotDB**
 
 ```bash
-bun install
+bun add jotdb
+# or
+npm install jotdb
 ```
 
-#### Dev
+### 2. **Bind the Durable Object in your wrangler.toml or wrangler.json**
+
+```toml
+[[durable_objects.bindings]]
+name = "JOTDB"
+class_name = "JotDB"
+```
+
+### 3. **Register the Durable Object in your Worker**
+
+```ts
+import { JotDB } from 'jotdb';
+
+export interface Env {
+  JOTDB: DurableObjectNamespace<JotDB>;
+}
+
+export default {
+  async fetch(request: Request, env: Env) {
+    // Get a stub for your JotDB instance
+    const id = env.JOTDB.idFromName("my-db");
+    const db = env.JOTDB.get(id);
+
+    // Use RPC (recommended, requires extends DurableObject)
+    await db.set("key", "value");
+    const value = await db.get("key");
+
+    return new Response(`Value: ${value}`);
+  }
+};
+```
+
+### 4. **Deploy or run locally**
 
 ```bash
 wrangler dev
-```
-
-#### Build
-
-```bash
-bun run build
-```
-
-#### Test
-
-```bash
-bun test jotdb.tests.ts
+# or
+wrangler deploy
 ```
 
 ---
 
-### 🧪 API Example
+## 📝 Notes
+
+- **RPC support:** JotDB uses Cloudflare's new JavaScript-native RPC. You can call methods directly on the stub (e.g., `db.set(...)`, `db.get(...)`).
+- **No fetch needed:** You do not need to use HTTP fetch to communicate with your Durable Object—just call methods!
+- **TypeScript:** Use `DurableObjectNamespace<JotDB>` for full type safety.
+- **See the API section below for all available methods.**
+
+---
+
+## 📚 Full Example
 
 ```ts
-const jot = env.JOTDB.get(env.JOTDB.idFromName("settings"));
+import { JotDB } from 'jotdb';
 
-await jot.setAll({ theme: "dark", notifications: true });
+export interface Env {
+  JOTDB: DurableObjectNamespace<JotDB>;
+}
 
-await jot.set("language", "en");
+export default {
+  async fetch(request: Request, env: Env) {
+    const id = env.JOTDB.idFromName("my-db");
+    const db = env.JOTDB.get(id);
 
-const all = await jot.getAll();  // { theme: "dark", notifications: true, language: "en" }
+    await db.setSchema({
+      name: "string",
+      age: "number",
+      email: "email"
+    });
 
-await jot.setOptions({ readOnly: true }); // future writes now fail
+    await db.setAll({
+      name: "Alice",
+      age: 42,
+      email: "alice@example.com"
+    });
 
-const audit = await jot.getAuditLog(); // get change history
+    const all = await db.getAll();
+
+    return new Response(JSON.stringify(all, null, 2), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+};
 ```
 
 ---
 
-### 📦 Configuration
+A lightweight, schema-validated key-value store built on Cloudflare Durable Objects.
 
-#### Durable Object Binding
+## Features
 
-```jsonc
-{
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "JOTDB",
-        "class_name": "JotDB"
-      }
-    ]
+- Schema validation using Zod
+- Automatic schema inference
+- Audit logging
+- TypeScript support
+- Read-only mode
+- Auto-strip mode for schema validation
+
+## Installation
+
+```bash
+npm install jotdb
+# or
+bun add jotdb
+```
+
+## Usage
+
+```typescript
+import { JotDB } from 'jotdb';
+
+// In your Worker
+export interface Env {
+  JOTDB: DurableObjectNamespace;
+}
+
+export default {
+  async fetch(request: Request, env: Env) {
+    const id = env.JOTDB.idFromName("my-db");
+    const db = env.JOTDB.get(id);
+    
+    // Set a value
+    await db.set("key", "value");
+    
+    // Get a value
+    const value = await db.get("key");
+    
+    // Set schema
+    await db.setSchema({
+      name: "string",
+      age: "number",
+      email: "email"
+    });
+    
+    // Set multiple values
+    await db.setAll({
+      name: "John",
+      age: 30,
+      email: "john@example.com"
+    });
   }
+};
+```
+
+## API
+
+### Methods
+
+- `get<T>(key: string): Promise<T | undefined>`
+- `set<T>(key: string, value: T): Promise<void>`
+- `getAll(): Promise<Record<string, unknown>>`
+- `setAll(obj: Record<string, unknown>): Promise<void>`
+- `delete(key: string): Promise<void>`
+- `clear(): Promise<void>`
+- `keys(): Promise<string[]>`
+- `has(key: string): Promise<boolean>`
+- `getSchema(): Promise<SchemaDefinition>`
+- `setSchema(schema: SchemaDefinition): Promise<void>`
+- `getOptions(): Promise<JotDBOptions>`
+- `setOptions(opts: Partial<JotDBOptions>): Promise<void>`
+- `getAuditLog(): Promise<AuditLogEntry[]>`
+- `clearAuditLog(): Promise<void>`
+
+### Types
+
+```typescript
+type SchemaType = "string" | "number" | "boolean" | "email" | "array" | "object" | "any";
+type SchemaDefinition = Record<string, SchemaType>;
+
+interface JotDBOptions {
+  autoStrip: boolean;
+  readOnly: boolean;
+}
+
+interface AuditLogEntry {
+  timestamp: number;
+  action: string;
+  keys: string[];
 }
 ```
 
----
-
-### 📁 File Structure
-
-```
-.
-├── src/
-│   └── JotDB.ts        # main Durable Object
-├── jotdb.tests.ts      # test suite
-├── wrangler.jsonc
-├── package.json
-└── README.md
-```
-
----
-
-### 🧰 Options
-
-```ts
-await jot.setOptions({
-  autoStrip: true,  // strip keys not in schema
-  readOnly: false,  // allow/disallow writes
-});
-```
-
----
-
-### 📜 License
+## License
 
 MIT
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Testing
+
+```bash
+bun test
+```
