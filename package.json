@@ -11,15 +11,12 @@
   },
   "types": "dist/index.d.ts",
   "scripts": {
-    "dev": "wrangler dev --port 5173 --remote",
-    "test": "bun test jotdb.tests.ts",
+    "dev": "wrangler dev --port 5173",
     "deploy": "wrangler deploy",
     "patch": "npm version patch && npm publish --access public"
   },
-  "dependencies": {
-    "typescript": "^5.8.3"
-  },
   "devDependencies": {
+    "typescript": "^5.8.3",
     "@cloudflare/workers-types": "^4.20250517.0",
     "hono": "^4.7.10",
     "wrangler": "^4.15.2",
