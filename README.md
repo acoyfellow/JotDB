@@ -1,6 +1,15 @@
 # JotDB
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/acoyfellow/jotdb)
+
 A lightweight, schema-less database built on Cloudflare Durable Objects. Perfect for quick prototyping and applications that need simple data storage without the complexity of traditional databases.
+
+> **Cloudflare Products**: JotDB works with any Cloudflare product that supports Durable Objects:
+> - Cloudflare Workers
+> - Cloudflare Pages (with Functions)
+> - Cloudflare Workflows
+> - Cloudflare Queues
+> - Cloudflare Cron Triggers
 
 ## Why JotDB?
 
@@ -11,6 +20,27 @@ I needed a quick way to save data without dealing with schemas, SQL, or complex 
 - Serverless environments
 - Real-time data storage
 - Collaborative applications
+
+## Design Patterns
+
+JotDB uses Cloudflare Durable Objects under the hood, which means you can organize your data in several ways:
+
+1. **Global Store**: Use a single instance for your entire application
+   ```typescript
+   const db = env.JOTDB.get(env.JOTDB.idFromName("global"));
+   ```
+
+2. **Per-User Store**: Create a separate instance for each user
+   ```typescript
+   const userDb = env.JOTDB.get(env.JOTDB.idFromName(`user:${userId}`));
+   ```
+
+3. **Per-Event Store**: Create temporary stores for events or sessions
+   ```typescript
+   const eventDb = env.JOTDB.get(env.JOTDB.idFromName(`event:${eventId}`));
+   ```
+
+Each instance is isolated and can have its own schema and options. This follows the Actor Model pattern, where each instance is an independent actor that manages its own state.
 
 ## Installation
 
