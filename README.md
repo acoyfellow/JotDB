@@ -1,202 +1,77 @@
 # JotDB
 
-## 🚀 Quick Start: Using JotDB in Your Cloudflare Worker
+A lightweight, schema-less database built on Cloudflare Durable Objects. Perfect for quick prototyping and applications that need simple data storage without the complexity of traditional databases.
 
-### 1. **Install JotDB**
+## Why JotDB?
 
-```bash
-bun add jotdb
-# or
-npm install jotdb
-```
+I needed a quick way to save data without dealing with schemas, SQL, or complex database setup. While Firestore is great, it can be overkill for simple use cases. JotDB provides a simpler alternative by leveraging Cloudflare Durable Objects, making it perfect for:
 
-### 2. **Bind the Durable Object in your wrangler.toml or wrangler.json**
-
-```toml
-[[durable_objects.bindings]]
-name = "JOTDB"
-class_name = "JotDB"
-```
-
-### 3. **Register the Durable Object in your Worker**
-
-```ts
-import { JotDB } from 'jotdb';
-
-export interface Env {
-  JOTDB: DurableObjectNamespace<JotDB>;
-}
-
-export default {
-  async fetch(request: Request, env: Env) {
-    // Get a stub for your JotDB instance
-    const id = env.JOTDB.idFromName("my-db");
-    const db = env.JOTDB.get(id);
-
-    // Use RPC (recommended, requires extends DurableObject)
-    await db.set("key", "value");
-    const value = await db.get("key");
-
-    return new Response(`Value: ${value}`);
-  }
-};
-```
-
-### 4. **Deploy or run locally**
-
-```bash
-wrangler dev
-# or
-wrangler deploy
-```
-
----
-
-## 📝 Notes
-
-- **RPC support:** JotDB uses Cloudflare's new JavaScript-native RPC. You can call methods directly on the stub (e.g., `db.set(...)`, `db.get(...)`).
-- **No fetch needed:** You do not need to use HTTP fetch to communicate with your Durable Object—just call methods!
-- **TypeScript:** Use `DurableObjectNamespace<JotDB>` for full type safety.
-- **See the API section below for all available methods.**
-
----
-
-## 📚 Full Example
-
-```ts
-import { JotDB } from 'jotdb';
-
-export interface Env {
-  JOTDB: DurableObjectNamespace<JotDB>;
-}
-
-export default {
-  async fetch(request: Request, env: Env) {
-    const id = env.JOTDB.idFromName("my-db");
-    const db = env.JOTDB.get(id);
-
-    await db.setSchema({
-      name: "string",
-      age: "number",
-      email: "email"
-    });
-
-    await db.setAll({
-      name: "Alice",
-      age: 42,
-      email: "alice@example.com"
-    });
-
-    const all = await db.getAll();
-
-    return new Response(JSON.stringify(all, null, 2), {
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-};
-```
-
----
-
-A lightweight, schema-validated key-value store built on Cloudflare Durable Objects.
-
-## Features
-
-- Schema validation using Zod
-- Automatic schema inference
-- Audit logging
-- TypeScript support
-- Read-only mode
-- Auto-strip mode for schema validation
+- Quick prototypes
+- Small to medium applications
+- Serverless environments
+- Real-time data storage
+- Collaborative applications
 
 ## Installation
 
 ```bash
+# Using npm
 npm install jotdb
-# or
-bun add jotdb
+
+# Using yarn
+yarn add jotdb
+
+# Using pnpm
+pnpm add jotdb
 ```
 
-## Usage
+## Full Example
 
 ```typescript
 import { JotDB } from 'jotdb';
 
-// In your Worker
-export interface Env {
-  JOTDB: DurableObjectNamespace;
-}
+// Initialize the database
+const jotId = env.JotDB.idFromName("my-db");
+const db = env.JotDB.get(jotId);
 
-export default {
-  async fetch(request: Request, env: Env) {
-    const id = env.JOTDB.idFromName("my-db");
-    const db = env.JOTDB.get(id);
-    
-    // Set a value
-    await db.set("key", "value");
-    
-    // Get a value
-    const value = await db.get("key");
-    
-    // Set schema
-    await db.setSchema({
-      name: "string",
-      age: "number",
-      email: "email"
-    });
-    
-    // Set multiple values
-    await db.setAll({
-      name: "John",
-      age: 30,
-      email: "john@example.com"
-    });
-  }
-};
+// Set a value
+await db.set("user:123", { name: "John", age: 30 });
+
+// Get a value
+const user = await db.get("user:123");
+console.log(user); // { name: "John", age: 30 }
+
+// Delete a value
+await db.delete("user:123");
 ```
 
-## API
+## API Reference
 
-### Methods
+| Method | Description | Parameters | Returns |
+|--------|-------------|------------|---------|
+| `set(key, value)` | Store a value | `key: string`, `value: any` | `Promise<void>` |
+| `get(key)` | Retrieve a value | `key: string` | `Promise<any>` |
+| `delete(key)` | Remove a value | `key: string` | `Promise<void>` |
+| `list(prefix?)` | List all keys (optionally filtered by prefix) | `prefix?: string` | `Promise<string[]>` |
 
-- `get<T>(key: string): Promise<T | undefined>`
-- `set<T>(key: string, value: T): Promise<void>`
-- `getAll(): Promise<Record<string, unknown>>`
-- `setAll(obj: Record<string, unknown>): Promise<void>`
-- `delete(key: string): Promise<void>`
-- `clear(): Promise<void>`
-- `keys(): Promise<string[]>`
-- `has(key: string): Promise<boolean>`
-- `getSchema(): Promise<SchemaDefinition>`
-- `setSchema(schema: SchemaDefinition): Promise<void>`
-- `getOptions(): Promise<JotDBOptions>`
-- `setOptions(opts: Partial<JotDBOptions>): Promise<void>`
-- `getAuditLog(): Promise<AuditLogEntry[]>`
-- `clearAuditLog(): Promise<void>`
-
-### Types
+## Types
 
 ```typescript
-type SchemaType = "string" | "number" | "boolean" | "email" | "array" | "object" | "any";
-type SchemaDefinition = Record<string, SchemaType>;
-
-interface JotDBOptions {
-  autoStrip: boolean;
-  readOnly: boolean;
-}
-
-interface AuditLogEntry {
-  timestamp: number;
-  action: string;
-  keys: string[];
+interface JotDB {
+  set(key: string, value: any): Promise<void>;
+  get(key: string): Promise<any>;
+  delete(key: string): Promise<void>;
+  list(prefix?: string): Promise<string[]>;
 }
 ```
 
 ## License
 
-MIT
+MIT License - feel free to use this in your own projects!
 
 ## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -206,6 +81,8 @@ MIT
 
 ## Testing
 
-```bash
-bun test
-```
+Currently, testing is done manually in production. We're working on adding a comprehensive test suite. For now, you can test the functionality by:
+
+1. Deploying to Cloudflare Workers
+2. Using the example endpoints
+3. Verifying data persistence
