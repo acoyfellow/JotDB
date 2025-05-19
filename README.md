@@ -2,7 +2,7 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/acoyfellow/jotdb)
 
-A lightweight, schema-less database built on Cloudflare Durable Objects. Perfect for quick prototyping and applications that need simple data storage without the complexity of traditional databases.
+A lightweight, schema-less database built on Cloudflare Durable Objects. Think of it as Firestore's security rules, but with Zod validation built-in. Perfect for both internal and external APIs, with automatic type safety and validation.
 
 > **Cloudflare Products**: JotDB works with any Cloudflare product that supports Durable Objects:
 > - Cloudflare Workers
@@ -13,13 +13,23 @@ A lightweight, schema-less database built on Cloudflare Durable Objects. Perfect
 
 ## Why JotDB?
 
-I needed a quick way to save data without dealing with schemas, SQL, or complex database setup. While Firestore is great, it can be overkill for simple use cases. JotDB provides a simpler alternative by leveraging Cloudflare Durable Objects, making it perfect for:
+JotDB combines the best of both worlds: the simplicity of NoSQL with the safety of schema validation. Here's what makes it special:
 
-- Quick prototypes
-- Small to medium applications
-- Serverless environments
-- Real-time data storage
-- Collaborative applications
+- **Built-in Type Safety**: Automatic Zod validation ensures your data is always in the right shape
+- **Edge-Native**: Runs directly on Cloudflare's edge network, with sub-millisecond latency
+- **RPC-First**: Direct method calls instead of HTTP endpoints (though you can easily wrap it in HTTP)
+- **Durable Storage**: Built on Durable Objects for reliable, consistent storage
+- **Zero Setup**: No database configuration, no connection strings, just instantiate and go
+- **Perfect for APIs**: Use it as an internal database or wrap it with auth for external APIs
+- **Real-time Ready**: Durable Objects provide strong consistency guarantees
+
+Perfect for:
+- Quick prototypes that need data validation
+- Small to medium applications that need reliable storage
+- Serverless environments where you want type safety
+- Real-time data storage with strong consistency
+- Collaborative applications that need data validation
+- APIs that need both flexibility and safety
 
 ## Design Patterns
 
