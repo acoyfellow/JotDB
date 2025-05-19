@@ -25,24 +25,47 @@ yarn add jotdb
 pnpm add jotdb
 ```
 
+### Configure wrangler.jsonc
+
+```jsonc
+{
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "JOTDB",
+        "class_name": "JotDB"
+      }
+    ]
+  }
+}
+```
+
 ## Full Example
 
 ```typescript
 import { JotDB } from 'jotdb';
 
-// Initialize the database
-const jotId = env.JotDB.idFromName("my-db");
-const db = env.JotDB.get(jotId);
+export interface Env {
+  JOTDB: DurableObjectNamespace;
+}
 
-// Set a value
-await db.set("user:123", { name: "John", age: 30 });
+export default {
+  async fetch(request: Request, env: Env) {
+    // Initialize the database
+    const jotId = env.JOTDB.idFromName("my-db");
+    const db = env.JOTDB.get(jotId);
 
-// Get a value
-const user = await db.get("user:123");
-console.log(user); // { name: "John", age: 30 }
+    // Example operations
+    await db.set("user:123", { name: "John", age: 30 });
+    const user = await db.get("user:123");
+    await db.delete("user:123");
 
-// Delete a value
-await db.delete("user:123");
+    // Return the result
+    return new Response(JSON.stringify({ user }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+};
 ```
 
 ## API Reference
