@@ -13,7 +13,8 @@
   "scripts": {
     "dev": "wrangler dev --port 5173",
     "deploy": "wrangler deploy",
-    "patch": "npm version patch && npm publish --access public"
+    "patch": "npm version patch",
+    "publish": "npm publish --access public"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

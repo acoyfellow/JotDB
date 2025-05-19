@@ -1,4 +1,4 @@
-import { z, ZodTypeAny, ZodObject } from "zod";
+import { z, ZodTypeAny, ZodObject, ZodError } from "zod";
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { prettyJSON } from 'hono/pretty-json';
@@ -6,7 +6,9 @@ import { DurableObject } from "cloudflare:workers";
 
 // Type definitions
 type SchemaType = "string" | "number" | "boolean" | "email" | "array" | "object" | "any";
-type SchemaDefinition = Record<string, SchemaType>;
+type ObjectSchema = Record<string, SchemaType>;
+type ArraySchema = { __arrayType: SchemaType | ObjectSchema };
+type SchemaDefinition = ObjectSchema | ArraySchema;
 
 interface JotDBOptions {
   autoStrip: boolean;
@@ -19,10 +21,39 @@ interface AuditLogEntry {
   keys: string[];
 }
 
+function isZodError(e: any): e is ZodError {
+  return e && typeof e === 'object' && Array.isArray(e.issues);
+}
+
+function handleZod<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (isZodError(e)) {
+      throw new Error('Validation failed: ' + e.issues.map(issue => issue.message).join('; '));
+    }
+    throw e;
+  }
+}
+
+function isArraySchema(schema: SchemaDefinition): schema is ArraySchema {
+  return '__arrayType' in schema;
+}
+function isObjectSchema(schema: SchemaDefinition): schema is ObjectSchema {
+  return !('__arrayType' in schema);
+}
+
+function inferPrimitiveType(v: any): SchemaType {
+  if (typeof v === "string") return v.includes("@") ? "email" : "string";
+  if (typeof v === "number") return "number";
+  if (typeof v === "boolean") return "boolean";
+  return "any";
+}
+
 export class JotDB extends DurableObject {
   private data: Record<string, unknown> | unknown[] = {};
   private rawSchema: SchemaDefinition = {};
-  private zodSchema: ZodObject<any> | null = null;
+  private zodSchema: ZodTypeAny | null = null;
   private options: JotDBOptions = {
     autoStrip: false,
     readOnly: false,
@@ -56,10 +87,48 @@ export class JotDB extends DurableObject {
     return Array.isArray(this.data);
   }
 
+  private inferSchemaFromValue(value: any): SchemaDefinition {
+    if (Array.isArray(value)) {
+      if (value.length === 0) return { __arrayType: "any" };
+      const first = value[0];
+      if (typeof first === "object" && first !== null && !Array.isArray(first)) {
+        // Array of objects
+        return { __arrayType: this.inferSchemaFromValue(first) };
+      }
+      // Array of primitives
+      return { __arrayType: inferPrimitiveType(first) };
+    }
+    if (typeof value === "object" && value !== null) {
+      const schema: ObjectSchema = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (Array.isArray(v)) {
+          schema[k] = "array";
+        } else if (typeof v === "object" && v !== null) {
+          schema[k] = "object";
+        } else {
+          schema[k] = inferPrimitiveType(v);
+        }
+      }
+      return schema;
+    }
+    // Top-level primitive (shouldn't happen for objects, but fallback)
+    return {};
+  }
+
   async push(item: unknown): Promise<void> {
     await this.load();
     if (!Array.isArray(this.data)) {
       this.data = [];
+    }
+    if (!this.zodSchema) {
+      const schema = this.inferSchemaFromValue([item]);
+      await this.setSchema(schema);
+      console.info('[JotDB] Auto-inferred and set schema from first push:', schema);
+    }
+    if (isArraySchema(this.rawSchema)) {
+      handleZod(() => (this.zodSchema as any).parse([item]));
+    } else if (this.zodSchema && isObjectSchema(this.rawSchema)) {
+      handleZod(() => this.zodSchema!.parse(item));
     }
     (this.data as unknown[]).push(item);
     await this.save();
@@ -68,8 +137,17 @@ export class JotDB extends DurableObject {
 
   async setAll(objOrArr: Record<string, unknown> | unknown[]): Promise<void> {
     await this.load();
-    if (!Array.isArray(objOrArr) && this.zodSchema) {
-      objOrArr = this.zodSchema.parse(objOrArr);
+    if (!this.zodSchema) {
+      const schema = this.inferSchemaFromValue(objOrArr);
+      await this.setSchema(schema);
+      console.info('[JotDB] Auto-inferred and set schema from first setAll:', schema);
+    }
+    if (Array.isArray(objOrArr) && isArraySchema(this.rawSchema)) {
+      handleZod(() => (this.zodSchema as any).parse(objOrArr));
+    } else if (!Array.isArray(objOrArr) && this.zodSchema && isObjectSchema(this.rawSchema)) {
+      objOrArr = handleZod(() => this.zodSchema!.parse(objOrArr));
+    } else if (Array.isArray(objOrArr) && this.zodSchema && isObjectSchema(this.rawSchema)) {
+      objOrArr.forEach(item => handleZod(() => this.zodSchema!.parse(item)));
     }
     this.data = objOrArr;
     await this.save();
@@ -183,30 +261,33 @@ export class JotDB extends DurableObject {
     await this.ctx.storage.put("__audit__", []);
   }
 
-  private buildZodSchema(schema: SchemaDefinition): ZodObject<any> {
+  private buildZodSchema(schema: SchemaDefinition): ZodTypeAny {
+    if (isArraySchema(schema)) {
+      const t = schema.__arrayType;
+      if (typeof t === "string") {
+        switch (t) {
+          case "string": return z.string().array();
+          case "number": return z.number().array();
+          case "boolean": return z.boolean().array();
+          case "email": return z.string().email().array();
+          default: return z.any().array();
+        }
+      } else {
+        // Array of objects
+        return this.buildZodSchema(t).array();
+      }
+    }
+    // Object schema
     const shape: Record<string, ZodTypeAny> = {};
     for (const [key, type] of Object.entries(schema)) {
       switch (type) {
-        case "string":
-          shape[key] = z.string();
-          break;
-        case "number":
-          shape[key] = z.number();
-          break;
-        case "boolean":
-          shape[key] = z.boolean();
-          break;
-        case "email":
-          shape[key] = z.string().email();
-          break;
-        case "array":
-          shape[key] = z.array(z.any());
-          break;
-        case "object":
-          shape[key] = z.record(z.any());
-          break;
-        default:
-          shape[key] = z.any();
+        case "string": shape[key] = z.string(); break;
+        case "number": shape[key] = z.number(); break;
+        case "boolean": shape[key] = z.boolean(); break;
+        case "email": shape[key] = z.string().email(); break;
+        case "array": shape[key] = z.array(z.any()); break;
+        case "object": shape[key] = z.record(z.any()); break;
+        default: shape[key] = z.any();
       }
     }
     return z.object(shape);
@@ -222,9 +303,15 @@ export class JotDB extends DurableObject {
       throw new Error("Database is in read-only mode");
     }
     if (!Array.isArray(this.data)) {
+      // Auto-infer schema if not set
+      if (!this.zodSchema) {
+        const schema = this.inferSchemaFromValue({ [key]: value });
+        await this.setSchema(schema);
+        console.info('[JotDB] Auto-inferred and set schema from first set:', schema);
+      }
       this.data[key] = value;
       if (this.zodSchema) {
-        this.zodSchema.parse(this.data);
+        handleZod(() => this.zodSchema!.parse(this.data));
       }
       await this.save();
       await this.logAudit("set", key);
@@ -246,7 +333,8 @@ app.use('*', prettyJSON());
 
 // Test endpoint
 app.get('/test', async (c) => {
-  const id = c.env.JOTDB.idFromName("test-db");
+  const JOB_ID = Date.now().toString();
+  const id = c.env.JOTDB.idFromName(JOB_ID);
   const db = c.env.JOTDB.get(id) as unknown as JotDB;
 
   const results = {
@@ -256,6 +344,7 @@ app.get('/test', async (c) => {
   };
 
   try {
+
     // Test 1: Basic set/get
     await db.set("test1", "hello");
     const value1 = await db.get("test1");
@@ -316,7 +405,7 @@ app.get('/test', async (c) => {
     });
 
     // Test 5: Array mode - setAll and getAll
-    const arrayId = c.env.JOTDB.idFromName("test-array");
+    const arrayId = c.env.JOTDB.idFromName(JOB_ID + "-test-array");
     const arrayDb = c.env.JOTDB.get(arrayId) as unknown as JotDB;
     await arrayDb.setAll([1, 2, 3]);
     const arr = await arrayDb.getAll();
@@ -333,6 +422,67 @@ app.get('/test', async (c) => {
       name: "Array mode push",
       passed: Array.isArray(arr2) && arr2.length === 4 && arr2[3] === 4,
       value: arr2
+    });
+
+    // --- Schema inference tests-- -
+    //   Object mode
+    const objId = c.env.JOTDB.idFromName("schema-obj");
+    const objDb = c.env.JOTDB.get(objId) as unknown as JotDB;
+    await objDb.setAll({ foo: "bar", count: 1 });
+    const objSchema = await objDb.getSchema();
+    let objPassed = false;
+    if (!('__arrayType' in objSchema)) {
+      objPassed = (objSchema as any).foo === "string" && (objSchema as any).count === "number";
+    }
+    results.tests.push({
+      name: "Object mode: inferred schema",
+      passed: objPassed,
+      value: objSchema
+    });
+    let objError = null;
+    try {
+      await objDb.setAll({ foo: 123, count: "not a number" });
+    } catch (e) {
+      objError = e instanceof Error ? e.message : String(e);
+    }
+    results.tests.push({
+      name: "Object mode: invalid shape fails",
+      passed: !!objError,
+      error: objError
+    });
+
+    // Array mode
+    const arrId = c.env.JOTDB.idFromName("schema-arr");
+    const arrDb = c.env.JOTDB.get(arrId) as unknown as JotDB;
+    await arrDb.setAll([{ foo: "bar", count: 1 }]);
+    const arrSchema = await arrDb.getSchema();
+    let arrPassed = false;
+    if ('__arrayType' in arrSchema && typeof arrSchema.__arrayType === 'object') {
+      arrPassed = arrSchema.__arrayType.foo === "string" && arrSchema.__arrayType.count === "number";
+    }
+    results.tests.push({
+      name: "Array mode: inferred schema",
+      passed: arrPassed,
+      value: arrSchema
+    });
+    let arrError = null;
+    try {
+      await arrDb.push({ foo: 123, count: "not a number" });
+    } catch (e) {
+      arrError = e instanceof Error ? e.message : String(e);
+    }
+    results.tests.push({
+      name: "Array mode: invalid item fails",
+      passed: !!arrError,
+      error: arrError
+    });
+
+    // Test 0: Clear database, set options to read-only: false
+    await db.clear();
+    results.tests.push({
+      name: "Clear database",
+      passed: true,
+      value: await db.getAll()
     });
 
     // Get audit log
@@ -364,9 +514,15 @@ app.get('/test', async (c) => {
 
     return new Response(html, { headers: { 'Content-Type': 'text/html' } });
   } catch (error) {
+    console.error(error);
+    let errorMessage = error instanceof Error ? error.message : String(error);
+    if (isZodError(error)) {
+      console.error(error.issues);
+      errorMessage = error.issues.map(issue => issue.message).join('\n');
+    }
     let html = `<!DOCTYPE html><html><head><title>JotDB Test Error</title></head><body>` +
       `<h1 style="color:red">Error</h1>` +
-      `<pre>${error instanceof Error ? error.message : String(error)}</pre>` +
+      `<pre>${errorMessage}</pre>` +
       `<h2>Partial Results</h2>` +
       `<pre>${JSON.stringify(results.tests, null, 2)}</pre>` +
       `<h2>Audit Log</h2>` +
