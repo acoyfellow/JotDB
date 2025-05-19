@@ -52,17 +52,32 @@ await db.delete("user:123");
 | `set(key, value)` | Store a value | `key: string`, `value: any` | `Promise<void>` |
 | `get(key)` | Retrieve a value | `key: string` | `Promise<any>` |
 | `delete(key)` | Remove a value | `key: string` | `Promise<void>` |
-| `list(prefix?)` | List all keys (optionally filtered by prefix) | `prefix?: string` | `Promise<string[]>` |
+| `clear()` | Remove all values | none | `Promise<void>` |
+| `keys()` | Get all keys | none | `Promise<string[]>` |
+| `has(key)` | Check if key exists | `key: string` | `Promise<boolean>` |
+| `getAll()` | Get all data | none | `Promise<Record<string, unknown> \| unknown[]>` |
+| `setAll(objOrArr)` | Set all data at once | `objOrArr: Record<string, unknown> \| unknown[]` | `Promise<void>` |
+| `push(item)` | Add item to array | `item: unknown` | `Promise<void>` |
+| `getSchema()` | Get current schema | none | `Promise<SchemaDefinition>` |
+| `setSchema(schema)` | Set data schema | `schema: SchemaDefinition` | `Promise<void>` |
+| `getOptions()` | Get current options | none | `Promise<JotDBOptions>` |
+| `setOptions(opts)` | Set database options | `opts: Partial<JotDBOptions>` | `Promise<void>` |
+| `getAuditLog()` | Get audit log entries | none | `Promise<AuditLogEntry[]>` |
+| `clearAuditLog()` | Clear audit log | none | `Promise<void>` |
 
-## Types
+### Options
 
 ```typescript
-interface JotDB {
-  set(key: string, value: any): Promise<void>;
-  get(key: string): Promise<any>;
-  delete(key: string): Promise<void>;
-  list(prefix?: string): Promise<string[]>;
+interface JotDBOptions {
+  autoStrip: boolean;  // Automatically strip unknown fields
+  readOnly: boolean;   // Enable read-only mode
 }
+```
+
+### Schema Types
+
+```typescript
+type SchemaType = "string" | "number" | "boolean" | "email" | "array" | "object" | "any";
 ```
 
 ## License
