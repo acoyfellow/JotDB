@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "jotdb",
+  "name": "cloudflare-rag-chatbot",
   "main": "src/index.ts",
   "compatibility_date": "2024-05-01",
   "compatibility_flags": [
@@ -9,8 +9,8 @@
   "durable_objects": {
     "bindings": [
       {
-        "name": "JOTDB",
-        "class_name": "JotDB"
+        "name": "CHATBOT",
+        "class_name": "ChatbotDO"
       }
     ]
   },
@@ -18,10 +18,25 @@
     {
       "tag": "v1",
       "new_classes": [
-        "JotDB"
+        "ChatbotDO"
       ]
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "DOCUMENTS",
+      "bucket_name": "chatbot-documents"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "VECTOR_INDEX",
+      "index_name": "document-embeddings"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
   "minify": true,
   "observability": {
     "enabled": true

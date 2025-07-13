@@ -1,538 +1,555 @@
-import { z, ZodTypeAny, ZodObject, ZodError } from "zod";
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { prettyJSON } from 'hono/pretty-json';
 import { DurableObject } from "cloudflare:workers";
+import { v4 as uuidv4 } from 'uuid';
+
+// Environment interface
+export interface Env {
+  CHATBOT: DurableObjectNamespace;
+  DOCUMENTS: R2Bucket;
+  VECTOR_INDEX: VectorizeIndex;
+  AI: Ai;
+}
 
 // Type definitions
-type SchemaType = "string" | "number" | "boolean" | "email" | "array" | "object" | "any";
-type ObjectSchema = Record<string, SchemaType>;
-type ArraySchema = { __arrayType: SchemaType | ObjectSchema };
-type SchemaDefinition = ObjectSchema | ArraySchema;
-
-interface JotDBOptions {
-  autoStrip: boolean;
-  readOnly: boolean;
+interface Document {
+  id: string;
+  filename: string;
+  content: string;
+  metadata: Record<string, any>;
+  uploadedAt: number;
+  chunks: string[];
 }
 
-interface AuditLogEntry {
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
   timestamp: number;
-  action: string;
-  keys: string[];
+  sources?: string[];
 }
 
-function isZodError(e: any): e is ZodError {
-  return e && typeof e === 'object' && Array.isArray(e.issues);
+interface ChatSession {
+  id: string;
+  messages: Message[];
+  createdAt: number;
+  lastActivity: number;
 }
 
-function handleZod<T>(fn: () => T): T {
-  try {
-    return fn();
-  } catch (e) {
-    if (isZodError(e)) {
-      throw new Error('Validation failed: ' + e.issues.map(issue => issue.message).join('; '));
-    }
-    throw e;
+// Utility functions
+const chunkText = (text: string, chunkSize: number = 1000, overlap: number = 200): string[] => {
+  const chunks: string[] = [];
+  let start = 0;
+  
+  while (start < text.length) {
+    const end = Math.min(start + chunkSize, text.length);
+    chunks.push(text.slice(start, end));
+    start = end - overlap;
   }
-}
+  
+  return chunks;
+};
 
-function isArraySchema(schema: SchemaDefinition): schema is ArraySchema {
-  return '__arrayType' in schema;
-}
-function isObjectSchema(schema: SchemaDefinition): schema is ObjectSchema {
-  return !('__arrayType' in schema);
-}
+const extractTextFromFile = async (file: any): Promise<string> => {
+  const arrayBuffer = await file.arrayBuffer();
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  
+  switch (extension) {
+    case 'txt':
+    case 'json':
+    case 'md':
+      return new TextDecoder().decode(arrayBuffer);
+    default:
+      return new TextDecoder().decode(arrayBuffer);
+  }
+};
 
-function inferPrimitiveType(v: any): SchemaType {
-  if (typeof v === "string") return v.includes("@") ? "email" : "string";
-  if (typeof v === "number") return "number";
-  if (typeof v === "boolean") return "boolean";
-  return "any";
-}
+export class ChatbotDO extends DurableObject {
+  private storage: DurableObjectStorage;
+  private env: Env;
+  private documents: Map<string, Document> = new Map();
+  private sessions: Map<string, ChatSession> = new Map();
 
-export class JotDB extends DurableObject {
-  private data: Record<string, unknown> | unknown[] = {};
-  private rawSchema: SchemaDefinition = {};
-  private zodSchema: ZodTypeAny | null = null;
-  private options: JotDBOptions = {
-    autoStrip: false,
-    readOnly: false,
-  };
-  private auditLog: AuditLogEntry[] = [];
-
-  constructor(state: any, env: Env) {
+  constructor(state: DurableObjectState, env: Env) {
     super(state, env);
+    this.storage = state.storage;
+    this.env = env;
   }
 
-  async load(): Promise<void> {
-    if (this.data == null || (typeof this.data === 'object' && Object.keys(this.data).length === 0)) {
-      this.data = (await this.ctx.storage.get("data")) ?? {};
-    }
-    if (Object.keys(this.rawSchema).length === 0) {
-      this.rawSchema = (await this.ctx.storage.get("__schema__")) || {};
-      if (Object.keys(this.rawSchema).length > 0) {
-        this.zodSchema = this.buildZodSchema(this.rawSchema);
-      }
-    }
-    const storedOptions = await this.ctx.storage.get("__options__") as JotDBOptions | null;
-    if (storedOptions) this.options = storedOptions;
-    this.auditLog = (await this.ctx.storage.get("__audit__")) || [];
-  }
-
-  async save(): Promise<void> {
-    await this.ctx.storage.put("data", this.data);
-  }
-
-  isArrayMode(): boolean {
-    return Array.isArray(this.data);
-  }
-
-  private inferSchemaFromValue(value: any): SchemaDefinition {
-    if (Array.isArray(value)) {
-      if (value.length === 0) return { __arrayType: "any" };
-      const first = value[0];
-      if (typeof first === "object" && first !== null && !Array.isArray(first)) {
-        // Array of objects
-        return { __arrayType: this.inferSchemaFromValue(first) };
-      }
-      // Array of primitives
-      return { __arrayType: inferPrimitiveType(first) };
-    }
-    if (typeof value === "object" && value !== null) {
-      const schema: ObjectSchema = {};
-      for (const [k, v] of Object.entries(value)) {
-        if (Array.isArray(v)) {
-          schema[k] = "array";
-        } else if (typeof v === "object" && v !== null) {
-          schema[k] = "object";
-        } else {
-          schema[k] = inferPrimitiveType(v);
-        }
-      }
-      return schema;
-    }
-    // Top-level primitive (shouldn't happen for objects, but fallback)
-    return {};
-  }
-
-  async push(item: unknown): Promise<void> {
-    await this.load();
-    if (!Array.isArray(this.data)) {
-      this.data = [];
-    }
-    if (!this.zodSchema) {
-      const schema = this.inferSchemaFromValue([item]);
-      await this.setSchema(schema);
-      console.info('[JotDB] Auto-inferred and set schema from first push:', schema);
-    }
-    if (isArraySchema(this.rawSchema)) {
-      handleZod(() => (this.zodSchema as any).parse([item]));
-    } else if (this.zodSchema && isObjectSchema(this.rawSchema)) {
-      handleZod(() => this.zodSchema!.parse(item));
-    }
-    (this.data as unknown[]).push(item);
-    await this.save();
-    await this.logAudit("push", []);
-  }
-
-  async setAll(objOrArr: Record<string, unknown> | unknown[]): Promise<void> {
-    await this.load();
-    if (!this.zodSchema) {
-      const schema = this.inferSchemaFromValue(objOrArr);
-      await this.setSchema(schema);
-      console.info('[JotDB] Auto-inferred and set schema from first setAll:', schema);
-    }
-    if (Array.isArray(objOrArr) && isArraySchema(this.rawSchema)) {
-      handleZod(() => (this.zodSchema as any).parse(objOrArr));
-    } else if (!Array.isArray(objOrArr) && this.zodSchema && isObjectSchema(this.rawSchema)) {
-      objOrArr = handleZod(() => this.zodSchema!.parse(objOrArr));
-    } else if (Array.isArray(objOrArr) && this.zodSchema && isObjectSchema(this.rawSchema)) {
-      objOrArr.forEach(item => handleZod(() => this.zodSchema!.parse(item)));
-    }
-    this.data = objOrArr;
-    await this.save();
-    await this.logAudit("setAll", Array.isArray(objOrArr) ? [] : Object.keys(objOrArr));
-  }
-
-  async getAll(): Promise<unknown> {
-    await this.load();
-    return this.data;
-  }
-
-  async logAudit(action: string, keys: string[] | string): Promise<void> {
-    const entry: AuditLogEntry = {
-      timestamp: Date.now(),
-      action,
-      keys: Array.isArray(keys) ? keys : [keys],
+  async uploadDocument(file: any, metadata: Record<string, any>): Promise<Document> {
+    const id = uuidv4();
+    const content = await extractTextFromFile(file);
+    const chunks = chunkText(content);
+    
+    const document: Document = {
+      id,
+      filename: file.name,
+      content,
+      metadata,
+      uploadedAt: Date.now(),
+      chunks
     };
-    this.auditLog.unshift(entry);
-    await this.ctx.storage.put("__audit__", this.auditLog.slice(0, 100)); // keep max 100 entries
-  }
 
-  async get<T = unknown>(key: string): Promise<T | undefined> {
-    await this.load();
-    if (!Array.isArray(this.data)) {
-      return this.data[key] as T;
-    }
-    return undefined;
-  }
-
-  async delete(key: string): Promise<void> {
-    await this.load();
-    if (!Array.isArray(this.data)) {
-      delete this.data[key];
-      await this.save();
-      await this.logAudit("delete", key);
-    }
-  }
-
-  async clear(): Promise<void> {
-    this.data = {};
-    await this.save();
-    await this.logAudit("clear", []);
-  }
-
-  async keys(): Promise<string[]> {
-    await this.load();
-    if (!Array.isArray(this.data)) {
-      return Object.keys(this.data);
-    }
-    return [];
-  }
-
-  async has(key: string): Promise<boolean> {
-    await this.load();
-    if (!Array.isArray(this.data)) {
-      return key in this.data;
-    }
-    return false;
-  }
-
-  async getSchema(): Promise<SchemaDefinition> {
-    await this.load();
-    return this.rawSchema;
-  }
-
-  private warnSchemaDiff(newSchema: SchemaDefinition): void {
-    const current = this.rawSchema;
-    for (const key in newSchema) {
-      if (!(key in current)) console.warn(`[JotDB] New key added: ${key}`);
-      else if (newSchema[key] !== current[key]) {
-        console.warn(
-          `[JotDB] Type changed for "${key}": ${current[key]} → ${newSchema[key]}`
-        );
+    await this.env.DOCUMENTS.put(id, JSON.stringify(document));
+    
+    for (const [index, chunk] of chunks.entries()) {
+      try {
+        const embedding = await this.env.AI.run('@cf/baai/bge-base-en-v1.5', {
+          text: chunk
+        });
+        
+        const embeddingData = (embedding as any).data?.[0] || [];
+        
+        await this.env.VECTOR_INDEX.insert([{
+          id: `${id}-${index}`,
+          values: embeddingData,
+          metadata: {
+            documentId: id,
+            chunkIndex: index,
+            filename: file.name,
+            content: chunk
+          }
+        }]);
+      } catch (error) {
+        console.error(`Error creating embedding for chunk ${index}:`, error);
       }
     }
-    for (const key in current) {
-      if (!(key in newSchema)) {
-        console.warn(`[JotDB] Key removed: ${key}`);
-      }
+
+    this.documents.set(id, document);
+    await this.storage.put(`document:${id}`, document);
+    
+    return document;
+  }
+
+  async getDocument(id: string): Promise<Document | null> {
+    const cached = this.documents.get(id);
+    if (cached) return cached;
+    
+    const stored = await this.storage.get<Document>(`document:${id}`);
+    if (stored) {
+      this.documents.set(id, stored);
+      return stored;
     }
+    
+    return null;
   }
 
-  async setSchema(schemaObj: SchemaDefinition): Promise<void> {
-    await this.load();
-    if (Object.keys(this.rawSchema).length > 0) {
-      this.warnSchemaDiff(schemaObj);
-    }
-    this.rawSchema = schemaObj;
-    this.zodSchema = this.buildZodSchema(schemaObj);
-    await this.ctx.storage.put("__schema__", schemaObj);
-  }
-
-  async setOptions(opts: Partial<JotDBOptions>): Promise<void> {
-    await this.load();
-    Object.assign(this.options, opts);
-    await this.ctx.storage.put("__options__", this.options);
-  }
-
-  async getOptions(): Promise<JotDBOptions> {
-    await this.load();
-    return this.options;
-  }
-
-  async getAuditLog(): Promise<AuditLogEntry[]> {
-    await this.load();
-    return this.auditLog;
-  }
-
-  async clearAuditLog(): Promise<void> {
-    this.auditLog = [];
-    await this.ctx.storage.put("__audit__", []);
-  }
-
-  private buildZodSchema(schema: SchemaDefinition): ZodTypeAny {
-    if (isArraySchema(schema)) {
-      const t = schema.__arrayType;
-      if (typeof t === "string") {
-        switch (t) {
-          case "string": return z.string().array();
-          case "number": return z.number().array();
-          case "boolean": return z.boolean().array();
-          case "email": return z.string().email().array();
-          default: return z.any().array();
+  async searchDocuments(query: string, limit = 10): Promise<Document[]> {
+    try {
+      const embedding = await this.env.AI.run('@cf/baai/bge-base-en-v1.5', { text: query });
+      const embeddingData = (embedding as any).data?.[0] || [];
+      
+      const results = await this.env.VECTOR_INDEX.query(embeddingData, { topK: limit });
+      
+      const documentIds = new Set(results.matches.map(m => m.metadata?.documentId).filter(Boolean));
+      const documents: Document[] = [];
+      
+      for (const docId of documentIds) {
+        const doc = await this.getDocument(docId);
+        if (doc) {
+          documents.push(doc);
         }
-      } else {
-        // Array of objects
-        return this.buildZodSchema(t).array();
       }
-    }
-    // Object schema
-    const shape: Record<string, ZodTypeAny> = {};
-    for (const [key, type] of Object.entries(schema)) {
-      switch (type) {
-        case "string": shape[key] = z.string(); break;
-        case "number": shape[key] = z.number(); break;
-        case "boolean": shape[key] = z.boolean(); break;
-        case "email": shape[key] = z.string().email(); break;
-        case "array": shape[key] = z.array(z.any()); break;
-        case "object": shape[key] = z.record(z.any()); break;
-        default: shape[key] = z.any();
-      }
-    }
-    return z.object(shape);
-  }
-
-  async fetch(request: Request) {
-    return new Response("Hello, World!");
-  }
-
-  async set(key: string, value: unknown): Promise<void> {
-    await this.load();
-    if (this.options.readOnly) {
-      throw new Error("Database is in read-only mode");
-    }
-    if (!Array.isArray(this.data)) {
-      // Auto-infer schema if not set
-      if (!this.zodSchema) {
-        const schema = this.inferSchemaFromValue({ [key]: value });
-        await this.setSchema(schema);
-        console.info('[JotDB] Auto-inferred and set schema from first set:', schema);
-      }
-      this.data[key] = value;
-      if (this.zodSchema) {
-        handleZod(() => this.zodSchema!.parse(this.data));
-      }
-      await this.save();
-      await this.logAudit("set", key);
-    } else {
-      throw new Error("Cannot use set() in array mode");
+      
+      return documents;
+    } catch (error) {
+      console.error('Error searching documents:', error);
+      return [];
     }
   }
-}
 
-export interface Env {
-  JOTDB: DurableObjectNamespace;
+  async deleteDocument(id: string): Promise<void> {
+    await this.env.DOCUMENTS.delete(id);
+    await this.storage.delete(`document:${id}`);
+    this.documents.delete(id);
+    
+    const doc = await this.storage.get<Document>(`document:${id}`);
+    if (doc) {
+      try {
+        const deleteIds = doc.chunks.map((_, index) => `${id}-${index}`);
+        await this.env.VECTOR_INDEX.deleteByIds(deleteIds);
+      } catch (error) {
+        console.error('Error deleting from vector index:', error);
+      }
+    }
+  }
+
+  async createSession(): Promise<ChatSession> {
+    const session: ChatSession = {
+      id: uuidv4(),
+      messages: [],
+      createdAt: Date.now(),
+      lastActivity: Date.now()
+    };
+    
+    this.sessions.set(session.id, session);
+    await this.storage.put(`session:${session.id}`, session);
+    
+    return session;
+  }
+
+  async getSession(id: string): Promise<ChatSession | null> {
+    const cached = this.sessions.get(id);
+    if (cached) return cached;
+    
+    const stored = await this.storage.get<ChatSession>(`session:${id}`);
+    if (stored) {
+      this.sessions.set(id, stored);
+      return stored;
+    }
+    
+    return null;
+  }
+
+  async addMessage(sessionId: string, message: Omit<Message, "id" | "timestamp">): Promise<Message> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      throw new Error("Session not found");
+    }
+    
+    const newMessage: Message = {
+      ...message,
+      id: uuidv4(),
+      timestamp: Date.now()
+    };
+    
+    session.messages.push(newMessage);
+    session.lastActivity = Date.now();
+    
+    this.sessions.set(sessionId, session);
+    await this.storage.put(`session:${sessionId}`, session);
+    
+    return newMessage;
+  }
+
+  async generateResponse(sessionId: string, userMessage: string): Promise<string> {
+    try {
+      const relevantDocs = await this.searchDocuments(userMessage, 3);
+      
+      const session = await this.getSession(sessionId);
+      if (!session) {
+        throw new Error("Session not found");
+      }
+      
+      const recentMessages = session.messages.slice(-5);
+      
+      const context = relevantDocs.map(doc => 
+        `Document: ${doc.filename}\n${doc.content.substring(0, 500)}...`
+      ).join('\n\n');
+      
+      const chatHistory = recentMessages.map(msg => 
+        `${msg.role}: ${msg.content}`
+      ).join('\n');
+      
+      const prompt = `You are a helpful assistant. Use the following context to answer questions accurately.
+
+Context from documents:
+${context}
+
+Chat history:
+${chatHistory}
+
+User: ${userMessage}`;
+
+      const response = await this.env.AI.run('@cf/meta/llama-3-8b-instruct', {
+        messages: [
+          { role: 'system', content: 'You are a helpful assistant that answers questions based on the provided context.' },
+          { role: 'user', content: prompt }
+        ]
+      });
+
+      const responseText = response.response || 'I apologize, but I could not generate a response at this time.';
+
+      const newMessage: Message = {
+        id: uuidv4(),
+        role: "assistant",
+        content: responseText,
+        timestamp: Date.now()
+      };
+
+      await this.addMessage(sessionId, newMessage);
+      return newMessage.content;
+    } catch (error) {
+      console.error('Error generating response:', error);
+      return 'Failed to generate response.';
+    }
+  }
+
+  async getDocuments(): Promise<Document[]> {
+    const documents: Document[] = [];
+    
+    const allKeys = await this.storage.list();
+    
+    for (const [key] of allKeys) {
+      if (key.startsWith('document:')) {
+        const doc = await this.storage.get<Document>(key);
+        if (doc) {
+          documents.push(doc);
+        }
+      }
+    }
+    
+    return documents;
+  }
 }
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Middleware
 app.use('*', cors());
 app.use('*', prettyJSON());
 
-// Test endpoint
-app.get('/test', async (c) => {
-  const JOB_ID = Date.now().toString();
-  const id = c.env.JOTDB.idFromName(JOB_ID);
-  const db = c.env.JOTDB.get(id) as unknown as JotDB;
-
-  const results = {
-    timestamp: Date.now(),
-    tests: [] as any[],
-    auditLog: [] as any[]
-  };
-
-  try {
-
-    // Test 1: Basic set/get
-    await db.set("test1", "hello");
-    const value1 = await db.get("test1");
-    results.tests.push({
-      name: "Basic set/get",
-      passed: value1 === "hello",
-      value: value1
-    });
-
-    // Test 2: Schema validation
-    await db.setSchema({
-      name: "string",
-      age: "number",
-      email: "email"
-    });
-    await db.setAll({
-      name: "John",
-      age: 30,
-      email: "john@example.com"
-    });
-    const all = await db.getAll() as { name: string, age: number, email: string };
-    results.tests.push({
-      name: "Schema validation",
-      passed: all.name === "John" && all.age === 30,
-      value: all
-    });
-
-    // Test 3: Read-only mode
-    await db.setOptions({ readOnly: true });
-    try {
-      await db.set("test3", "should fail");
-      results.tests.push({
-        name: "Read-only mode",
-        passed: false,
-        error: "Should have thrown"
-      });
-    } catch (e) {
-      results.tests.push({
-        name: "Read-only mode",
-        passed: true,
-        error: e instanceof Error ? e.message : String(e)
-      });
-    }
-
-    // Test 4: Auto-strip mode
-    await db.setOptions({ readOnly: false, autoStrip: true });
-    await db.setAll({
-      name: "Jane",
-      age: 25,
-      email: "jane@example.com",
-      extra: "should be stripped"
-    });
-    const stripped = await db.getAll() as { name: string, age: number, email: string };
-    results.tests.push({
-      name: "Auto-strip mode",
-      passed: !("extra" in stripped),
-      value: stripped
-    });
-
-    // Test 5: Array mode - setAll and getAll
-    const arrayId = c.env.JOTDB.idFromName(JOB_ID + "-test-array");
-    const arrayDb = c.env.JOTDB.get(arrayId) as unknown as JotDB;
-    await arrayDb.setAll([1, 2, 3]);
-    const arr = await arrayDb.getAll();
-    results.tests.push({
-      name: "Array mode setAll/getAll",
-      passed: Array.isArray(arr) && arr.length === 3 && arr[0] === 1 && arr[2] === 3,
-      value: arr
-    });
-
-    // Test 6: Array mode - push
-    await arrayDb.push(4);
-    const arr2 = await arrayDb.getAll();
-    results.tests.push({
-      name: "Array mode push",
-      passed: Array.isArray(arr2) && arr2.length === 4 && arr2[3] === 4,
-      value: arr2
-    });
-
-    // --- Schema inference tests-- -
-    //   Object mode
-    const objId = c.env.JOTDB.idFromName("schema-obj");
-    const objDb = c.env.JOTDB.get(objId) as unknown as JotDB;
-    await objDb.setAll({ foo: "bar", count: 1 });
-    const objSchema = await objDb.getSchema();
-    let objPassed = false;
-    if (!('__arrayType' in objSchema)) {
-      objPassed = (objSchema as any).foo === "string" && (objSchema as any).count === "number";
-    }
-    results.tests.push({
-      name: "Object mode: inferred schema",
-      passed: objPassed,
-      value: objSchema
-    });
-    let objError = null;
-    try {
-      await objDb.setAll({ foo: 123, count: "not a number" });
-    } catch (e) {
-      objError = e instanceof Error ? e.message : String(e);
-    }
-    results.tests.push({
-      name: "Object mode: invalid shape fails",
-      passed: !!objError,
-      error: objError
-    });
-
-    // Array mode
-    const arrId = c.env.JOTDB.idFromName("schema-arr");
-    const arrDb = c.env.JOTDB.get(arrId) as unknown as JotDB;
-    await arrDb.setAll([{ foo: "bar", count: 1 }]);
-    const arrSchema = await arrDb.getSchema();
-    let arrPassed = false;
-    if ('__arrayType' in arrSchema && typeof arrSchema.__arrayType === 'object') {
-      arrPassed = arrSchema.__arrayType.foo === "string" && arrSchema.__arrayType.count === "number";
-    }
-    results.tests.push({
-      name: "Array mode: inferred schema",
-      passed: arrPassed,
-      value: arrSchema
-    });
-    let arrError = null;
-    try {
-      await arrDb.push({ foo: 123, count: "not a number" });
-    } catch (e) {
-      arrError = e instanceof Error ? e.message : String(e);
-    }
-    results.tests.push({
-      name: "Array mode: invalid item fails",
-      passed: !!arrError,
-      error: arrError
-    });
-
-    // Test 0: Clear database, set options to read-only: false
-    await db.clear();
-    results.tests.push({
-      name: "Clear database",
-      passed: true,
-      value: await db.getAll()
-    });
-
-    // Get audit log
-    results.auditLog = await db.getAuditLog();
-
-    // HTML output
-    let html = `<!DOCTYPE html><html><head><title>JotDB Test Results</title>
+app.get('/', async (c) => {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Chatbot</title>
     <style>
-      body { font-family: sans-serif; margin: 2em; }
-      .pass { color: green; }
-      .fail { color: red; }
-      .test { margin-bottom: 1em; }
-      pre { background: #f4f4f4; padding: 0.5em; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; height: 100vh; display: flex; }
+        .sidebar { width: 300px; background: #2c3e50; color: white; padding: 20px; overflow-y: auto; }
+        .main { flex: 1; display: flex; flex-direction: column; }
+        .header { background: #34495e; color: white; padding: 20px; text-align: center; }
+        .chat-container { flex: 1; padding: 20px; overflow-y: auto; }
+        .input-container { background: white; padding: 20px; border-top: 1px solid #ddd; display: flex; gap: 10px; }
+        .input-container input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        .input-container button { padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .input-container button:hover { background: #2980b9; }
+        .message { margin-bottom: 20px; padding: 15px; border-radius: 10px; max-width: 80%; }
+        .message.user { background: #3498db; color: white; margin-left: auto; }
+        .message.assistant { background: white; border: 1px solid #ddd; }
+        .upload-area { border: 2px dashed #3498db; border-radius: 5px; padding: 20px; text-align: center; margin-bottom: 20px; cursor: pointer; }
+        .upload-area:hover { background: #f8f9fa; }
+        .document-item { background: #34495e; margin: 5px 0; padding: 10px; border-radius: 5px; font-size: 14px; }
+        .document-item button { background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; float: right; }
+        .document-item button:hover { background: #c0392b; }
+        .loading { text-align: center; color: #7f8c8d; }
+        .error { color: #e74c3c; background: #fdf2f2; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
     </style>
-    </head><body>
-    <h1>JotDB Test Results</h1>
-    <p><b>Timestamp:</b> ${new Date(results.timestamp).toLocaleString()}</p>
-    <div>
-      ${results.tests.map(test => `
-        <div class="test">
-          <b>${test.name}:</b> <span class="${test.passed ? 'pass' : 'fail'}">${test.passed ? 'PASS' : 'FAIL'}</span><br/>
-          <pre>${JSON.stringify(test.value ?? test.error, null, 2)}</pre>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>📚 Documents</h2>
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <p>📁 Click to upload documents</p>
+            <small>Supports .txt, .md, .json files</small>
         </div>
-      `).join('')}
+        <input type="file" id="fileInput" accept=".txt,.md,.json" style="display: none;" multiple>
+        <div id="documentList"></div>
     </div>
-    <h2>Audit Log</h2>
-    <pre>${JSON.stringify(results.auditLog, null, 2)}</pre>
-    </body></html>`;
+    
+    <div class="main">
+        <div class="header">
+            <h1>🤖 RAG Chatbot</h1>
+            <p>Chat with your documents using AI</p>
+        </div>
+        
+        <div class="chat-container" id="chatContainer">
+            <div class="message assistant">
+                <p>Hello! I'm your AI assistant. Upload some documents and I'll help you find information from them.</p>
+            </div>
+        </div>
+        
+        <div class="input-container">
+            <input type="text" id="messageInput" placeholder="Ask me anything about your documents..." />
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
 
-    return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+    <script>
+        let currentSessionId = null;
+        let documents = [];
+
+        async function initSession() {
+            try {
+                const response = await fetch('/api/session', { method: 'POST' });
+                const session = await response.json();
+                currentSessionId = session.id;
+            } catch (error) {
+                console.error('Failed to initialize session:', error);
+            }
+        }
+
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const files = e.target.files;
+            for (const file of files) {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    const response = await fetch('/api/document', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        const document = await response.json();
+                        documents.push(document);
+                        updateDocumentList();
+                        addMessage('system', 'Document "' + document.filename + '" uploaded successfully!');
+                    } else {
+                        throw new Error('Upload failed');
+                    }
+                } catch (error) {
+                    addMessage('error', 'Failed to upload ' + file.name);
+                }
+            }
+        });
+
+        function updateDocumentList() {
+            const list = document.getElementById('documentList');
+            list.innerHTML = documents.map(doc => 
+                '<div class="document-item">' +
+                    doc.filename +
+                    '<button onclick="deleteDocument(\\'' + doc.id + '\\')">Delete</button>' +
+                '</div>'
+            ).join('');
+        }
+
+        async function deleteDocument(id) {
+            try {
+                const response = await fetch('/api/document/' + id, { method: 'DELETE' });
+                if (response.ok) {
+                    documents = documents.filter(doc => doc.id !== id);
+                    updateDocumentList();
+                    addMessage('system', 'Document deleted successfully!');
+                }
+            } catch (error) {
+                addMessage('error', 'Failed to delete document');
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message || !currentSessionId) return;
+            
+            addMessage('user', message);
+            input.value = '';
+            
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message assistant loading';
+            loadingDiv.innerHTML = '<p>🤔 Thinking...</p>';
+            document.getElementById('chatContainer').appendChild(loadingDiv);
+            
+            try {
+                const response = await fetch('/api/session/' + currentSessionId + '/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                
+                const data = await response.json();
+                loadingDiv.remove();
+                
+                if (response.ok) {
+                    addMessage('assistant', data.response);
+                } else {
+                    addMessage('error', data.error || 'Failed to get response');
+                }
+            } catch (error) {
+                loadingDiv.remove();
+                addMessage('error', 'Failed to send message');
+            }
+        }
+
+        function addMessage(type, content) {
+            const container = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + type;
+            messageDiv.innerHTML = '<p>' + content + '</p>';
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        initSession();
+    </script>
+</body>
+</html>`;
+
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+});
+
+// API Routes
+app.post('/api/session', async (c) => {
+  const id = c.env.CHATBOT.idFromName(`session-${Date.now()}`);
+  const chatbot = c.env.CHATBOT.get(id);
+  
+  try {
+    const session = await chatbot.createSession();
+    return c.json({ id: session.id });
   } catch (error) {
-    console.error(error);
-    let errorMessage = error instanceof Error ? error.message : String(error);
-    if (isZodError(error)) {
-      console.error(error.issues);
-      errorMessage = error.issues.map(issue => issue.message).join('\n');
-    }
-    let html = `<!DOCTYPE html><html><head><title>JotDB Test Error</title></head><body>` +
-      `<h1 style="color:red">Error</h1>` +
-      `<pre>${errorMessage}</pre>` +
-      `<h2>Partial Results</h2>` +
-      `<pre>${JSON.stringify(results.tests, null, 2)}</pre>` +
-      `<h2>Audit Log</h2>` +
-      `<pre>${JSON.stringify(results.auditLog, null, 2)}</pre>` +
-      `</body></html>`;
-    return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+    return c.json({ error: 'Failed to create session' }, 500);
   }
 });
 
-// Health check endpoint
-app.get('/', (c) => c.text('JotDB Durable Object'));
+app.post('/api/document', async (c) => {
+  const id = c.env.CHATBOT.idFromName('default');
+  const chatbot = c.env.CHATBOT.get(id);
+  
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file');
+    
+    if (!file) {
+      return c.json({ error: 'No file provided' }, 400);
+    }
+    
+    const document = await chatbot.uploadDocument(file, {});
+    return c.json(document);
+  } catch (error) {
+    return c.json({ error: 'Failed to upload document' }, 500);
+  }
+});
+
+app.delete('/api/document/:id', async (c) => {
+  const id = c.env.CHATBOT.idFromName('default');
+  const chatbot = c.env.CHATBOT.get(id);
+  
+  try {
+    await chatbot.deleteDocument(c.req.param('id'));
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ error: 'Failed to delete document' }, 500);
+  }
+});
+
+app.post('/api/session/:id/chat', async (c) => {
+  const sessionId = c.req.param('id');
+  const { message } = await c.req.json();
+  
+  const id = c.env.CHATBOT.idFromName(`session-${sessionId}`);
+  const chatbot = c.env.CHATBOT.get(id);
+  
+  try {
+    const response = await chatbot.generateResponse(sessionId, message);
+    return c.json({ response });
+  } catch (error) {
+    return c.json({ error: 'Failed to generate response' }, 500);
+  }
+});
+
+app.get('/api/documents', async (c) => {
+  const id = c.env.CHATBOT.idFromName('default');
+  const chatbot = c.env.CHATBOT.get(id);
+  
+  try {
+    const documents = await chatbot.getDocuments();
+    return c.json(documents);
+  } catch (error) {
+    return c.json({ error: 'Failed to fetch documents' }, 500);
+  }
+});
+
+app.get('/health', (c) => c.text('RAG Chatbot is running'));
 
 export default app;
