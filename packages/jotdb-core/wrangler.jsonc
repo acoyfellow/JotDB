@@ -14,6 +14,13 @@
       }
     ]
   },
+  "kv_namespaces": [
+    {
+      "binding": "CACHE_KV",
+      "id": "your-kv-namespace-id",
+      "preview_id": "your-preview-kv-namespace-id"
+    }
+  ],
   "migrations": [
     {
       "tag": "v1",

@@ -1,0 +1,33 @@
+{
+  "name": "@jotdb/svelte",
+  "version": "2.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@jotdb/client": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "svelte": "^5.0.0"
+  },
+  "peerDependencies": {
+    "svelte": "^4.0.0 || ^5.0.0",
+    "zod": "^3.24.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/acoyfellow/jotdb.git",
+    "directory": "packages/jotdb-svelte"
+  }
+}

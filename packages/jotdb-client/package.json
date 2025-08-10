@@ -1,0 +1,35 @@
+{
+  "name": "@jotdb/client",
+  "version": "2.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "zod": "^3.24.4",
+    "@effect/schema": "^0.75.4",
+    "effect": "^3.10.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.8"
+  },
+  "peerDependencies": {
+    "zod": "^3.24.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/acoyfellow/jotdb.git",
+    "directory": "packages/jotdb-client"
+  }
+}

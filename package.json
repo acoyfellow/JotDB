@@ -1,30 +1,22 @@
 {
-  "name": "jotdb",
-  "version": "0.1.8",
+  "name": "jotdb-monorepo",
+  "version": "2.0.0",
+  "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    }
-  },
-  "types": "dist/index.d.ts",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
   "scripts": {
-    "dev": "wrangler dev --port 5173",
-    "deploy": "wrangler deploy",
-    "patch": "npm version patch",
-    "publish": "npm publish --access public"
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev --workspaces --if-present",
+    "deploy:core": "npm run deploy --workspace=packages/jotdb-core",
+    "test": "npm run test --workspaces --if-present"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "@cloudflare/workers-types": "^4.20250517.0",
-    "hono": "^4.7.10",
-    "wrangler": "^4.15.2",
-    "zod": "^3.24.4"
+    "typescript": "^5.8.3"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/acoyfellow/jotdb.git"
+  "engines": {
+    "node": ">=18"
   }
 }

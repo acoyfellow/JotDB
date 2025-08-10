@@ -1,0 +1,30 @@
+{
+  "name": "@jotdb/core",
+  "version": "2.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "dev": "wrangler dev --port 5173",
+    "deploy": "wrangler deploy",
+    "patch": "npm version patch",
+    "publish": "npm publish --access public"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@cloudflare/workers-types": "^4.20250517.0",
+    "hono": "^4.7.10",
+    "wrangler": "^4.15.2",
+    "zod": "^3.24.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/acoyfellow/jotdb.git"
+  }
+}

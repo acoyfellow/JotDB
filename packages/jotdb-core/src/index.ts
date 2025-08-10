@@ -13,12 +13,28 @@ type SchemaDefinition = ObjectSchema | ArraySchema;
 interface JotDBOptions {
   autoStrip: boolean;
   readOnly: boolean;
+  enableRealtime: boolean; // NEW: Enable real-time features
 }
 
 interface AuditLogEntry {
   timestamp: number;
   action: string;
   keys: string[];
+}
+
+// NEW: Real-time event types
+interface ChangeEvent {
+  type: 'set' | 'delete' | 'clear' | 'push' | 'setAll';
+  key?: string;
+  value?: unknown;
+  timestamp: number;
+  instanceId: string;
+}
+
+interface RealtimeMessage {
+  type: 'subscribe' | 'unsubscribe' | 'change';
+  collection?: string;
+  data?: ChangeEvent;
 }
 
 function isZodError(e: any): e is ZodError {
@@ -57,11 +73,19 @@ export class JotDB extends DurableObject {
   private options: JotDBOptions = {
     autoStrip: false,
     readOnly: false,
+    enableRealtime: false,
   };
   private auditLog: AuditLogEntry[] = [];
+  
+  // NEW: Real-time WebSocket management
+  private connections = new Set<WebSocket>();
+  private instanceId: string;
+  private env: Env;
 
   constructor(state: any, env: Env) {
     super(state, env);
+    this.instanceId = crypto.randomUUID();
+    this.env = env;
   }
 
   async load(): Promise<void> {
@@ -133,6 +157,14 @@ export class JotDB extends DurableObject {
     (this.data as unknown[]).push(item);
     await this.save();
     await this.logAudit("push", []);
+    
+    // NEW: Broadcast change event
+    this.broadcast({
+      type: 'push',
+      value: item,
+      timestamp: Date.now(),
+      instanceId: this.instanceId
+    });
   }
 
   async setAll(objOrArr: Record<string, unknown> | unknown[]): Promise<void> {
@@ -152,6 +184,14 @@ export class JotDB extends DurableObject {
     this.data = objOrArr;
     await this.save();
     await this.logAudit("setAll", Array.isArray(objOrArr) ? [] : Object.keys(objOrArr));
+    
+    // NEW: Broadcast change event
+    this.broadcast({
+      type: 'setAll',
+      value: objOrArr,
+      timestamp: Date.now(),
+      instanceId: this.instanceId
+    });
   }
 
   async getAll(): Promise<unknown> {
@@ -183,6 +223,17 @@ export class JotDB extends DurableObject {
       delete this.data[key];
       await this.save();
       await this.logAudit("delete", key);
+      
+      // NEW: Invalidate cache
+      await this.invalidateCache(key);
+      
+      // NEW: Broadcast change event
+      this.broadcast({
+        type: 'delete',
+        key,
+        timestamp: Date.now(),
+        instanceId: this.instanceId
+      });
     }
   }
 
@@ -190,6 +241,16 @@ export class JotDB extends DurableObject {
     this.data = {};
     await this.save();
     await this.logAudit("clear", []);
+    
+    // NEW: Invalidate all cache
+    await this.invalidateCache();
+    
+    // NEW: Broadcast change event
+    this.broadcast({
+      type: 'clear',
+      timestamp: Date.now(),
+      instanceId: this.instanceId
+    });
   }
 
   async keys(): Promise<string[]> {
@@ -293,8 +354,117 @@ export class JotDB extends DurableObject {
     return z.object(shape);
   }
 
+  // NEW: Real-time broadcasting
+  private broadcast(event: ChangeEvent): void {
+    if (!this.options.enableRealtime) return;
+    
+    const message: RealtimeMessage = {
+      type: 'change',
+      data: event
+    };
+    
+    this.connections.forEach(ws => {
+      try {
+        ws.send(JSON.stringify(message));
+      } catch (error) {
+        // Remove broken connections
+        this.connections.delete(ws);
+      }
+    });
+  }
+
+  // NEW: WebSocket upgrade handling
   async fetch(request: Request) {
-    return new Response("Hello, World!");
+    const upgradeHeader = request.headers.get('Upgrade');
+    if (upgradeHeader === 'websocket') {
+      return this.handleWebSocket(request);
+    }
+    
+    return new Response("JotDB Durable Object - Use WebSocket for real-time features");
+  }
+
+  // NEW: WebSocket connection handler
+  private async handleWebSocket(request: Request): Promise<Response> {
+    const webSocketPair = new WebSocketPair();
+    const [client, server] = Object.values(webSocketPair);
+
+    server.accept();
+    this.connections.add(server);
+
+    server.addEventListener('message', (event) => {
+      try {
+        const message: RealtimeMessage = JSON.parse(event.data as string);
+        this.handleWebSocketMessage(server, message);
+      } catch (error) {
+        server.send(JSON.stringify({ error: 'Invalid message format' }));
+      }
+    });
+
+    server.addEventListener('close', () => {
+      this.connections.delete(server);
+    });
+
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+    });
+  }
+
+  // NEW: Handle WebSocket messages
+  private handleWebSocketMessage(ws: WebSocket, message: RealtimeMessage): void {
+    switch (message.type) {
+      case 'subscribe':
+        // For now, just acknowledge subscription
+        ws.send(JSON.stringify({ type: 'subscribed', collection: message.collection }));
+        break;
+      case 'unsubscribe':
+        // Handle unsubscription if needed
+        ws.send(JSON.stringify({ type: 'unsubscribed', collection: message.collection }));
+        break;
+    }
+  }
+
+  // NEW: KV cache integration
+  private async updateCache(key: string, data: unknown): Promise<void> {
+    if (!this.env.CACHE_KV) return;
+    
+    try {
+      const cacheKey = `jotdb:${this.instanceId}:${key}`;
+      await this.env.CACHE_KV.put(cacheKey, JSON.stringify(data), {
+        expirationTtl: 3600 // 1 hour cache
+      });
+    } catch (error) {
+      console.warn('[JotDB] Cache update failed:', error);
+    }
+  }
+
+  private async getFromCache(key: string): Promise<unknown | null> {
+    if (!this.env.CACHE_KV) return null;
+    
+    try {
+      const cacheKey = `jotdb:${this.instanceId}:${key}`;
+      const cached = await this.env.CACHE_KV.get(cacheKey);
+      return cached ? JSON.parse(cached) : null;
+    } catch (error) {
+      console.warn('[JotDB] Cache read failed:', error);
+      return null;
+    }
+  }
+
+  private async invalidateCache(key?: string): Promise<void> {
+    if (!this.env.CACHE_KV) return;
+    
+    try {
+      if (key) {
+        const cacheKey = `jotdb:${this.instanceId}:${key}`;
+        await this.env.CACHE_KV.delete(cacheKey);
+      } else {
+        // Clear all cache for this instance (would need to track keys)
+        // For now, we'll rely on TTL expiration
+      }
+    } catch (error) {
+      console.warn('[JotDB] Cache invalidation failed:', error);
+    }
   }
 
   async set(key: string, value: unknown): Promise<void> {
@@ -315,6 +485,18 @@ export class JotDB extends DurableObject {
       }
       await this.save();
       await this.logAudit("set", key);
+      
+      // NEW: Update cache
+      await this.updateCache(key, value);
+      
+      // NEW: Broadcast change event
+      this.broadcast({
+        type: 'set',
+        key,
+        value,
+        timestamp: Date.now(),
+        instanceId: this.instanceId
+      });
     } else {
       throw new Error("Cannot use set() in array mode");
     }
@@ -323,6 +505,7 @@ export class JotDB extends DurableObject {
 
 export interface Env {
   JOTDB: DurableObjectNamespace;
+  CACHE_KV?: KVNamespace; // NEW: Optional KV cache for performance
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -532,7 +715,92 @@ app.get('/test', async (c) => {
   }
 });
 
+// API endpoints for client communication
+app.post('/do/:id/:method', async (c) => {
+  const { id, method } = c.req.param();
+  const body = await c.req.json().catch(() => ({}));
+  
+  const durableObjectId = c.env.JOTDB.idFromName(id);
+  const db = c.env.JOTDB.get(durableObjectId) as unknown as JotDB;
+
+  try {
+    let result;
+    switch (method) {
+      case 'get':
+        result = await db.get(body.key);
+        break;
+      case 'set':
+        await db.set(body.key, body.value);
+        result = { success: true };
+        break;
+      case 'delete':
+        await db.delete(body.key);
+        result = { success: true };
+        break;
+      case 'clear':
+        await db.clear();
+        result = { success: true };
+        break;
+      case 'getAll':
+        result = await db.getAll();
+        break;
+      case 'setAll':
+        await db.setAll(body.value);
+        result = { success: true };
+        break;
+      case 'push':
+        await db.push(body.value);
+        result = { success: true };
+        break;
+      case 'keys':
+        result = await db.keys();
+        break;
+      case 'has':
+        result = await db.has(body.key);
+        break;
+      case 'getSchema':
+        result = await db.getSchema();
+        break;
+      case 'setSchema':
+        await db.setSchema(body.schema);
+        result = { success: true };
+        break;
+      case 'getOptions':
+        result = await db.getOptions();
+        break;
+      case 'setOptions':
+        await db.setOptions(body.options);
+        result = { success: true };
+        break;
+      default:
+        return c.json({ error: 'Unknown method' }, 400);
+    }
+
+    return c.json({ data: result });
+  } catch (error) {
+    console.error('JotDB API error:', error);
+    return c.json({ 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    }, 500);
+  }
+});
+
+// WebSocket endpoint for real-time connections
+app.get('/ws/:id', async (c) => {
+  const { id } = c.req.param();
+  const upgradeHeader = c.req.header('upgrade');
+  
+  if (upgradeHeader !== 'websocket') {
+    return c.text('Expected WebSocket upgrade', 400);
+  }
+
+  const durableObjectId = c.env.JOTDB.idFromName(id);
+  const db = c.env.JOTDB.get(durableObjectId);
+  
+  return db.fetch(c.req.raw);
+});
+
 // Health check endpoint
-app.get('/', (c) => c.text('JotDB Durable Object'));
+app.get('/', (c) => c.text('JotDB v2 - Real-time Database'));
 
 export default app;

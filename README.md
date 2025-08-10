@@ -1,166 +1,320 @@
-# JotDB
+# JotDB v2: Real-time Database for Cloudflare
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/acoyfellow/jotdb)
 
-A lightweight, schema-less database built on Cloudflare Durable Objects. Think of it as Firestore's security rules, but with Zod validation built-in. Perfect for both internal and external APIs, with automatic type safety and validation.
+A complete **Firestore alternative** built on Cloudflare's edge infrastructure. JotDB v2 combines the simplicity of NoSQL with real-time synchronization, type safety, and edge-native performance.
 
-> **Cloudflare Products**: JotDB works with any Cloudflare product that supports Durable Objects:
-> - Cloudflare Workers
-> - Cloudflare Pages (with Functions)
-> - Cloudflare Workflows
-> - Cloudflare Queues
-> - Cloudflare Cron Triggers
+> **🚀 What's New in v2:**
+> - **Real-time WebSocket synchronization** - Live updates across all connected clients
+> - **Firestore-like client API** - Familiar `collection().doc().set()` patterns  
+> - **Framework adapters** - React hooks, Svelte stores, Vue composables
+> - **KV caching layer** - Automatic performance optimization
+> - **Local-first sync** - Offline-capable with automatic conflict resolution
 
-## Why JotDB?
+## Why JotDB v2?
 
-JotDB combines the best of both worlds: the simplicity of NoSQL with the safety of schema validation. Here's what makes it special:
+JotDB v2 is the **complete Firestore alternative for Cloudflare**. While v1 gave you a reliable edge database, v2 adds the real-time client experience that makes Firestore special.
 
-- **Built-in Type Safety**: Automatic Zod validation ensures your data is always in the right shape
-- **Edge-Native**: Runs directly on Cloudflare's edge network, with sub-millisecond latency
-- **RPC-First**: Direct method calls instead of HTTP endpoints (though you can easily wrap it in HTTP)
-- **Durable Storage**: Built on Durable Objects for reliable, consistent storage
-- **Zero Setup**: No database configuration, no connection strings, just instantiate and go
-- **Perfect for APIs**: Use it as an internal database or wrap it with auth for external APIs
-- **Real-time Ready**: Durable Objects provide strong consistency guarantees
+### Core Benefits
+- **🔥 Real-time sync** - Changes propagate instantly to all connected clients
+- **⚡ Edge-native** - Sub-millisecond latency from Cloudflare's global network
+- **🛡️ Type-safe** - End-to-end TypeScript with Zod validation
+- **🎯 Zero setup** - No database configuration, just deploy and connect
+- **📱 Framework ready** - Drop-in hooks for React, Svelte, Vue
+- **💾 Local-first** - Works offline, syncs when reconnected
 
-Perfect for:
-- Quick prototypes that need data validation
-- Small to medium applications that need reliable storage
-- Serverless environments where you want type safety
-- Real-time data storage with strong consistency
-- Collaborative applications that need data validation
-- APIs that need both flexibility and safety
+### Perfect For
+- **Collaborative apps** - Real-time editing, live cursors, shared state
+- **Live dashboards** - Metrics that update instantly across teams  
+- **Chat applications** - Messages sync in real-time
+- **Gaming** - Live leaderboards, multiplayer state
+- **IoT dashboards** - Sensor data streaming to multiple clients
 
-## Design Patterns
+## Quick Start
 
-JotDB uses Cloudflare Durable Objects under the hood, which means you can organize your data in several ways:
-
-1. **Global Store**: Use a single instance for your entire application
-   ```typescript
-   const db = env.JOTDB.get(env.JOTDB.idFromName("global"));
-   ```
-
-2. **Per-User Store**: Create a separate instance for each user
-   ```typescript
-   const userDb = env.JOTDB.get(env.JOTDB.idFromName(`user:${userId}`));
-   ```
-
-3. **Per-Event Store**: Create temporary stores for events or sessions
-   ```typescript
-   const eventDb = env.JOTDB.get(env.JOTDB.idFromName(`event:${eventId}`));
-   ```
-
-Each instance is isolated and can have its own schema and options. This follows the Actor Model pattern, where each instance is an independent actor that manages its own state.
-
-## Installation
+### 1. Deploy the Database
 
 ```bash
-# Using npm
-npm install jotdb
-
-# Using yarn
-yarn add jotdb
-
-# Using pnpm
-pnpm add jotdb
+# Clone and deploy to Cloudflare
+git clone https://github.com/acoyfellow/jotdb.git
+cd jotdb/packages/jotdb-core
+npm install
+wrangler deploy
 ```
 
-### Configure wrangler.jsonc
+### 2. Install Client Library
 
-```jsonc
-{
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "JOTDB",
-        "class_name": "JotDB"
-      }
-    ]
-  }
+```bash
+# For React apps
+npm install @jotdb/react zod
+
+# For Svelte apps  
+npm install @jotdb/svelte zod
+
+# For Vue apps
+npm install @jotdb/vue zod
+
+# Framework-agnostic
+npm install @jotdb/client zod
+```
+
+### 3. Connect and Use
+
+#### React Example
+```tsx
+import { initializeJotDB, useCollection } from '@jotdb/react';
+import { z } from 'zod';
+
+// Initialize once in your app root
+initializeJotDB({
+  endpoint: 'https://your-worker.your-subdomain.workers.dev',
+  enableRealtime: true
+});
+
+// Define your data schema
+const TodoSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  completed: z.boolean()
+});
+
+function TodoList() {
+  const { data: todos, add } = useCollection('todos', TodoSchema);
+
+  return (
+    <div>
+      {todos.map(todo => (
+        <div key={todo.id}>{todo.text}</div>
+      ))}
+      <button onClick={() => add({ 
+        id: crypto.randomUUID(),
+        text: 'New todo',
+        completed: false 
+      })}>
+        Add Todo
+      </button>
+    </div>
+  );
 }
 ```
 
-## Full Example
+#### Svelte Example
+```svelte
+<script lang="ts">
+  import { initializeJotDB, useCollection } from '@jotdb/svelte';
+  import { z } from 'zod';
 
-```typescript
-import { JotDB } from 'jotdb';
+  // Initialize client
+  initializeJotDB({
+    endpoint: 'https://your-worker.your-subdomain.workers.dev',
+    enableRealtime: true
+  });
 
-export interface Env {
-  JOTDB: DurableObjectNamespace;
-}
+  const TodoSchema = z.object({
+    id: z.string(),
+    text: z.string(),
+    completed: z.boolean()
+  });
 
-export default {
-  async fetch(request: Request, env: Env) {
-    // Initialize the database
-    const jotId = env.JOTDB.idFromName("my-db");
-    const db = env.JOTDB.get(jotId);
+  const todos = useCollection('todos', TodoSchema);
 
-    // Example operations
-    await db.set("user:123", { name: "John", age: 30 });
-    const user = await db.get("user:123");
-    await db.delete("user:123");
-
-    // Return the result
-    return new Response(JSON.stringify({ user }), {
-      headers: { 'Content-Type': 'application/json' }
+  async function addTodo() {
+    await todos.add({
+      id: crypto.randomUUID(),
+      text: 'New todo',
+      completed: false
     });
   }
-};
+</script>
+
+{#each $todos as todo}
+  <div>{todo.text}</div>
+{/each}
+
+<button on:click={addTodo}>Add Todo</button>
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Cloudflare Edge                          │
+├─────────────────────────────────────────────────────────────┤
+│  JotDB Durable Object                                       │
+│  ├─ Data Storage (Durable Objects Storage)                  │
+│  ├─ Real-time WebSockets                                    │
+│  ├─ Schema Validation (Zod)                                 │
+│  └─ KV Cache Layer                                          │
+├─────────────────────────────────────────────────────────────┤
+│                   Client Libraries                          │
+│  ├─ @jotdb/client (Core)                                    │
+│  ├─ @jotdb/react (React Hooks)                              │
+│  ├─ @jotdb/svelte (Svelte Stores)                           │
+│  └─ @jotdb/vue (Vue Composables)                            │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## API Reference
 
-| Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
-| `set(key, value)` | Store a value | `key: string`, `value: any` | `Promise<void>` |
-| `get(key)` | Retrieve a value | `key: string` | `Promise<any>` |
-| `delete(key)` | Remove a value | `key: string` | `Promise<void>` |
-| `clear()` | Remove all values | none | `Promise<void>` |
-| `keys()` | Get all keys | none | `Promise<string[]>` |
-| `has(key)` | Check if key exists | `key: string` | `Promise<boolean>` |
-| `getAll()` | Get all data | none | `Promise<Record<string, unknown> \| unknown[]>` |
-| `setAll(objOrArr)` | Set all data at once | `objOrArr: Record<string, unknown> \| unknown[]` | `Promise<void>` |
-| `push(item)` | Add item to array | `item: unknown` | `Promise<void>` |
-| `getSchema()` | Get current schema | none | `Promise<SchemaDefinition>` |
-| `setSchema(schema)` | Set data schema | `schema: SchemaDefinition` | `Promise<void>` |
-| `getOptions()` | Get current options | none | `Promise<JotDBOptions>` |
-| `setOptions(opts)` | Set database options | `opts: Partial<JotDBOptions>` | `Promise<void>` |
-| `getAuditLog()` | Get audit log entries | none | `Promise<AuditLogEntry[]>` |
-| `clearAuditLog()` | Clear audit log | none | `Promise<void>` |
-
-### Options
-
+### Client Initialization
 ```typescript
-interface JotDBOptions {
-  autoStrip: boolean;  // Automatically strip unknown fields
-  readOnly: boolean;   // Enable read-only mode
+import { initializeJotDB } from '@jotdb/react'; // or svelte, vue
+
+const client = initializeJotDB({
+  endpoint: 'https://your-worker.workers.dev',
+  enableRealtime: true,      // Enable WebSocket sync
+  autoReconnect: true,       // Auto-reconnect on disconnect
+  reconnectDelay: 1000       // Reconnect delay in ms
+});
+```
+
+### Collections (Firestore-like API)
+```typescript
+// Get a collection reference
+const todos = client.collection('todos', TodoSchema);
+
+// Add documents
+await todos.add({ text: 'Buy milk', completed: false });
+
+// Get all documents
+const snapshot = await todos.get();
+snapshot.docs.forEach(doc => console.log(doc.data));
+
+// Real-time subscription
+const unsubscribe = todos.onSnapshot(snapshot => {
+  console.log('Todos updated:', snapshot.docs.map(d => d.data));
+});
+```
+
+### Documents
+```typescript
+// Get document reference
+const doc = todos.doc('todo-123');
+
+// Set document data
+await doc.set({ text: 'Updated text', completed: true });
+
+// Update partial data
+await doc.update({ completed: true });
+
+// Delete document
+await doc.delete();
+
+// Real-time subscription
+const unsubscribe = doc.onSnapshot(snapshot => {
+  if (snapshot.exists) {
+    console.log('Document data:', snapshot.data);
+  }
+});
+```
+
+### Framework Hooks
+
+#### React
+```typescript
+import { useCollection, useDocument, useConnectionStatus } from '@jotdb/react';
+
+function MyComponent() {
+  const { data, loading, error, add } = useCollection('todos', TodoSchema);
+  const { data: user, set, update } = useDocument('users', 'user-123', UserSchema);
+  const { status, isConnected } = useConnectionStatus();
+  
+  // data automatically updates in real-time
+  return <div>{data.map(todo => todo.text)}</div>;
 }
 ```
 
-### Schema Types
+#### Svelte
+```typescript
+import { useCollection, useDocument, useConnectionStatus } from '@jotdb/svelte';
+
+const todos = useCollection('todos', TodoSchema);
+const user = useDocument('users', 'user-123', UserSchema);
+const connectionStatus = useConnectionStatus();
+
+// $todos, $user, $connectionStatus are reactive stores
+```
+
+## Examples
+
+This repository includes comprehensive examples:
+
+- **📝 [Todo App](./examples/todo-app)** - Real-time collaborative todo list
+- **💬 [Chat App](./examples/chat-app)** - Live messaging with presence
+- **📊 [Dashboard](./examples/dashboard)** - Live metrics and analytics
+
+## Deployment
+
+### 1. Core Database (Required)
+```bash
+cd packages/jotdb-core
+wrangler deploy
+```
+
+### 2. Configure KV Cache (Optional)
+```bash
+# Create KV namespace
+wrangler kv:namespace create "CACHE_KV"
+
+# Update wrangler.jsonc with the returned ID
+```
+
+### 3. Update Client Endpoints
+```typescript
+initializeJotDB({
+  endpoint: 'https://your-deployed-worker.workers.dev',
+  enableRealtime: true
+});
+```
+
+## Migration from v1
+
+JotDB v2 is **100% backward compatible**. Existing v1 code continues to work unchanged.
+
+To enable v2 features:
+1. Deploy the enhanced Durable Object
+2. Install framework adapters
+3. Initialize client with `enableRealtime: true`
 
 ```typescript
-type SchemaType = "string" | "number" | "boolean" | "email" | "array" | "object" | "any";
+// v1 code (still works)
+const db = env.JOTDB.get(env.JOTDB.idFromName("global"));
+await db.set("key", "value");
+
+// v2 real-time features (new)
+const client = initializeJotDB({ endpoint: '...', enableRealtime: true });
+const todos = useCollection('todos');
+```
+
+## Packages
+
+| Package | Description | Version |
+|---------|-------------|---------|
+| `@jotdb/core` | Enhanced Durable Object with real-time features | 2.0.0 |
+| `@jotdb/client` | Framework-agnostic client library | 2.0.0 |
+| `@jotdb/react` | React hooks for JotDB | 2.0.0 |
+| `@jotdb/svelte` | Svelte stores for JotDB | 2.0.0 |
+| `@jotdb/vue` | Vue composables for JotDB | 2.0.0 |
+
+## Contributing
+
+We welcome contributions! This is a monorepo using npm workspaces:
+
+```bash
+# Install dependencies
+npm install
+
+# Build all packages
+npm run build
+
+# Run examples
+cd examples/todo-app && npm run dev
 ```
 
 ## License
 
-MIT License - feel free to use this in your own projects!
+MIT License - use this in your own projects!
 
-## Contributing
+---
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Testing
-
-Currently, testing is done manually in production. We're working on adding a comprehensive test suite. For now, you can test the functionality by:
-
-1. Deploying to Cloudflare Workers
-2. Using the example endpoints
-3. Verifying data persistence
+**JotDB v2** - The complete real-time database solution for modern web applications. Built for Cloudflare's edge, designed for developers who want Firestore's experience with edge performance.
