@@ -1,26 +1,49 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JotDB Demo</title>
+  <title>JotDB — Durable state without migrations</title>
+  <meta name="description" content="JotDB is a tiny database for stateful Cloudflare apps: one Durable Object per user, tenant, room, session, or actor, with schema validation and no migration files." />
+  <meta name="robots" content="index,follow" />
+  <link rel="canonical" href="https://jotdb.coey.dev/" />
+  <meta property="og:title" content="JotDB — Durable state without migrations" />
+  <meta property="og:description" content="A tiny database for stateful Cloudflare apps. One Durable Object per entity, schema validation built in, no SQL or migration files." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://jotdb.coey.dev/" />
+  <meta property="og:image" content="https://jotdb.coey.dev/og.svg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="JotDB — Durable state without migrations" />
+  <meta name="twitter:description" content="A tiny database for stateful Cloudflare apps. One Durable Object per entity, schema validation built in, no SQL or migration files." />
+  <meta name="twitter:image" content="https://jotdb.coey.dev/og.svg" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
-    body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;background:#0b1020;color:#eef2ff}main{max-width:920px;margin:0 auto;padding:48px 24px}h1{font-size:3rem;margin:0 0 12px}p{color:#c7d2fe;line-height:1.6}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin:32px 0}.card{background:#121a30;border:1px solid #26324f;border-radius:16px;padding:20px}.card h2{margin-top:0}.pill{display:inline-block;background:#1e293b;color:#a5b4fc;border-radius:999px;padding:4px 10px;font-size:.8rem}.code{background:#050817;border-radius:10px;padding:14px;white-space:pre-wrap;color:#c4b5fd}.button{display:inline-block;background:#6366f1;color:white;text-decoration:none;padding:10px 16px;border-radius:10px;margin-top:12px}.small{font-size:.9rem;color:#94a3b8}
+    :root{--primary:#3b82f6;--secondary:#8b5cf6;--surface:#fff;--text:#111827;--muted:#64748b;--border:#e2e8f0;--soft:#f8fafc;--success:#16a34a;--radius:16px;--shadow:0 8px 28px rgba(15,23,42,.06)}
+    *{box-sizing:border-box}body{margin:0;background:var(--surface);color:var(--text);font-family:Roboto,system-ui,sans-serif;line-height:1.6}main{max-width:1120px;margin:auto;padding:32px 24px 80px}.nav{display:flex;justify-content:space-between;align-items:center;padding:8px 0 56px}.logo{font:700 20px Poppins,system-ui,sans-serif;letter-spacing:-.03em}.nav a{color:var(--muted);text-decoration:none}.hero{max-width:760px;padding:56px 0 72px}.eyebrow{display:inline-flex;gap:8px;align-items:center;color:var(--primary);font-size:14px;font-weight:600;background:#eff6ff;border-radius:999px;padding:6px 12px}.hero h1{font:700 clamp(48px,8vw,84px)/1.02 Poppins,system-ui,sans-serif;letter-spacing:-.06em;margin:24px 0}.hero p{font-size:20px;color:var(--muted);max-width:680px}.actions{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:10px;text-decoration:none;font-weight:600}.primary{background:var(--primary);color:#fff}.secondary{background:#fff;color:var(--text);border:1px solid var(--border)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{border:1px solid var(--border);border-radius:var(--radius);padding:24px;background:#fff;box-shadow:var(--shadow)}.card h2{font:600 20px Poppins,system-ui,sans-serif;margin:0 0 8px}.card p{color:var(--muted);margin:0 0 18px}.code{font:14px/1.6 Inconsolata,ui-monospace,monospace;background:var(--soft);border-radius:10px;padding:14px;overflow:auto}.section{margin-top:72px}.section h2{font:700 32px Poppins,system-ui,sans-serif;letter-spacing:-.04em;margin-bottom:12px}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:16px}.list{margin:0;padding-left:20px;color:var(--muted)}.footer{margin-top:80px;padding-top:24px;border-top:1px solid var(--border);color:var(--muted);font-size:14px}@media(max-width:760px){.grid,.comparison{grid-template-columns:1fr}.nav{padding-bottom:32px}.hero{padding:32px 0 48px}.hero h1{font-size:56px}}
   </style>
 </head>
-<body><main>
-  <span class="pill">Cloudflare Durable Objects</span>
-  <h1>JotDB</h1>
-  <p>A tiny durable database for stateful Cloudflare apps. No SQL. No migrations. No ORM. Just per-entity state with schema validation.</p>
-  <div class="grid">
-    <div class="card"><h2>User preferences</h2><p>One Durable Object per user.</p><div class="code">const db = env.JOTDB.getByName(`user:${userId}`)
-await db.setAll({ theme: "dark" })</div></div>
-    <div class="card"><h2>Feature flags</h2><p>One Durable Object per tenant.</p><div class="code">const flags = env.JOTDB.getByName(`tenant:${id}`)
-await flags.set("aiSearch", true)</div></div>
-    <div class="card"><h2>Chat history</h2><p>One Durable Object per room.</p><div class="code">const room = env.JOTDB.getByName(`room:${id}`)
-await room.push({ body: "hello" })</div></div>
-  </div>
-  <div class="card"><h2>Why not D1?</h2><p>Use D1 for joins, analytics, and relational queries. Use JotDB when your data naturally belongs to one user, tenant, room, session, or actor and you want schema validation without migration files.</p><a class="button" href="https://github.com/acoyfellow/JotDB">View on GitHub</a></div>
-  <p class="small">This is intentionally minimal. The next pass should add richer visual design, live examples, and benchmark charts.</p>
-</main></body>
+<body>
+  <main>
+    <nav class="nav" aria-label="Main navigation"><div class="logo">JotDB</div><a href="https://github.com/acoyfellow/JotDB">GitHub</a></nav>
+    <section class="hero">
+      <span class="eyebrow">Cloudflare Durable Objects</span>
+      <h1>Durable state without migrations.</h1>
+      <p>JotDB is a tiny database for stateful Cloudflare apps. Use one Durable Object per user, tenant, room, session, or actor — with schema validation built in.</p>
+      <div class="actions"><a class="button primary" href="https://github.com/acoyfellow/JotDB">View on GitHub</a><a class="button secondary" href="#examples">See examples</a></div>
+    </section>
+    <section id="examples" class="grid" aria-label="Examples">
+      <article class="card"><h2>User preferences</h2><p>One object per user, no table required.</p><pre class="code">const db = env.JOTDB.getByName(`user:${userId}`)
+await db.setAll({ theme: "dark" })</pre></article>
+      <article class="card"><h2>Feature flags</h2><p>One object per tenant, typed and isolated.</p><pre class="code">const flags = env.JOTDB.getByName(`tenant:${id}`)
+await flags.set("aiSearch", true)</pre></article>
+      <article class="card"><h2>Chat history</h2><p>One object per room, append messages directly.</p><pre class="code">const room = env.JOTDB.getByName(`room:${id}`)
+await room.push({ body: "hello" })</pre></article>
+    </section>
+    <section class="section">
+      <h2>Why JotDB instead of D1?</h2>
+      <div class="comparison"><article class="card"><h2>Use JotDB when</h2><ul class="list"><li>Data belongs to one user, tenant, room, or session</li><li>You want no SQL or migration files</li><li>You want schema validation at the edge</li><li>You need actor-style isolation and consistency</li></ul></article><article class="card"><h2>Use D1 when</h2><ul class="list"><li>You need joins or ad hoc queries</li><li>You need reporting or analytics</li><li>Your data is relational</li><li>You need cross-entity transactions</li></ul></article></div>
+    </section>
+    <footer class="footer">Intentionally minimal first-pass demo. Next pass: live examples, benchmark charts, and richer product storytelling.</footer>
+  </main>
+</body>
 </html>
