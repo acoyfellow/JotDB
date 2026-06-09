@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>JotDB Demo</title>
+  <style>
+    body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;background:#0b1020;color:#eef2ff}main{max-width:920px;margin:0 auto;padding:48px 24px}h1{font-size:3rem;margin:0 0 12px}p{color:#c7d2fe;line-height:1.6}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin:32px 0}.card{background:#121a30;border:1px solid #26324f;border-radius:16px;padding:20px}.card h2{margin-top:0}.pill{display:inline-block;background:#1e293b;color:#a5b4fc;border-radius:999px;padding:4px 10px;font-size:.8rem}.code{background:#050817;border-radius:10px;padding:14px;white-space:pre-wrap;color:#c4b5fd}.button{display:inline-block;background:#6366f1;color:white;text-decoration:none;padding:10px 16px;border-radius:10px;margin-top:12px}.small{font-size:.9rem;color:#94a3b8}
+  </style>
+</head>
+<body><main>
+  <span class="pill">Cloudflare Durable Objects</span>
+  <h1>JotDB</h1>
+  <p>A tiny durable database for stateful Cloudflare apps. No SQL. No migrations. No ORM. Just per-entity state with schema validation.</p>
+  <div class="grid">
+    <div class="card"><h2>User preferences</h2><p>One Durable Object per user.</p><div class="code">const db = env.JOTDB.getByName(`user:${userId}`)
+await db.setAll({ theme: "dark" })</div></div>
+    <div class="card"><h2>Feature flags</h2><p>One Durable Object per tenant.</p><div class="code">const flags = env.JOTDB.getByName(`tenant:${id}`)
+await flags.set("aiSearch", true)</div></div>
+    <div class="card"><h2>Chat history</h2><p>One Durable Object per room.</p><div class="code">const room = env.JOTDB.getByName(`room:${id}`)
+await room.push({ body: "hello" })</div></div>
+  </div>
+  <div class="card"><h2>Why not D1?</h2><p>Use D1 for joins, analytics, and relational queries. Use JotDB when your data naturally belongs to one user, tenant, room, session, or actor and you want schema validation without migration files.</p><a class="button" href="https://github.com/acoyfellow/JotDB">View on GitHub</a></div>
+  <p class="small">This is intentionally minimal. The next pass should add richer visual design, live examples, and benchmark charts.</p>
+</main></body>
+</html>

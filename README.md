@@ -299,6 +299,24 @@ The benchmark modes intentionally map to practical JotDB workloads rather than s
 - `cold-warm`: first-hit versus repeated access to the same object
 - `schema-validation`: repeated Zod-validated writes
 
+## Demo site
+
+A deliberately minimal landing page lives in `demo/index.html`. It is meant to be the simplest possible public-facing demo before a fuller design pass. It currently communicates the core JotDB story:
+
+- one Durable Object per entity
+- no SQL or migrations
+- schema-validated state
+- user preferences
+- feature flags
+- chat history
+- why JotDB is different from D1
+
+Open it locally with any static file server:
+
+```bash
+npx serve demo
+```
+
 ## Installation
 
 ```bash
