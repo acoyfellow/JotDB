@@ -1,0 +1,1 @@
+{"type":"module","scripts":{"dev":"vite"},"dependencies":{"svelte-hono":"file:../../svelte-hono"}}
