@@ -14,14 +14,16 @@
     "dev": "wrangler dev --port 5173",
     "deploy": "wrangler deploy",
     "patch": "npm version patch",
-    "publish": "npm publish --access public"
+    "publish": "npm publish --access public",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "@cloudflare/workers-types": "^4.20250517.0",
-    "hono": "^4.7.10",
-    "wrangler": "^4.15.2",
-    "zod": "^3.24.4"
+    "@cloudflare/workers-types": "^4.20260608.1",
+    "hono": "^4.12.24",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.98.0",
+    "zod": "^4.4.3"
   },
   "repository": {
     "type": "git",
