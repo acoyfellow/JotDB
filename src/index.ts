@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { prettyJSON } from 'hono/pretty-json';
 import { DurableObject } from "cloudflare:workers";
+import { JotStore, SQLiteStoreAdapter } from './store';
 
 // Type definitions
 type SchemaType = "string" | "number" | "boolean" | "email" | "array" | "object" | "any";
@@ -79,9 +80,11 @@ export class JotDB extends DurableObject {
     readOnly: false,
   };
   private auditLog: AuditLogEntry[] = [];
+  private store: JotStore<unknown> | null = null;
 
   constructor(state: any, env: Env) {
     super(state, env);
+    if (state.storage?.sql) this.store = new JotStore(new SQLiteStoreAdapter(state.storage.sql));
   }
 
   async load(): Promise<void> {
@@ -466,6 +469,26 @@ export class JotDB extends DurableObject {
 
   async fetch(request: Request) {
     return new Response("Hello, World!");
+  }
+
+  async scan<T = unknown>(prefix = '', options?: { limit?: number; cursor?: string }) {
+    if (!this.store) throw new Error('SQLite-backed store is not enabled');
+    return this.store.scan(prefix, options) as Promise<{ items: T[]; cursor?: string }>;
+  }
+
+  async append<T = unknown>(stream: string, value: T) {
+    if (!this.store) throw new Error('SQLite-backed store is not enabled');
+    return this.store.append(stream, value);
+  }
+
+  async appendCapped<T = unknown>(stream: string, value: T, max: number) {
+    if (!this.store) throw new Error('SQLite-backed store is not enabled');
+    return this.store.appendCapped(stream, value, max);
+  }
+
+  async retention(prefix: string, maxAgeMs: number) {
+    if (!this.store) throw new Error('SQLite-backed store is not enabled');
+    return this.store.retention(prefix, maxAgeMs);
   }
 
   async set(key: string, value: unknown): Promise<void> {

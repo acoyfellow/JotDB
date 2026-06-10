@@ -299,6 +299,32 @@ The benchmark modes intentionally map to practical JotDB workloads rather than s
 - `cold-warm`: first-hit versus repeated access to the same object
 - `schema-validation`: repeated Zod-validated writes
 
+## SQLite-backed collections
+
+For bounded collections, receipts, chat history, or per-entity streams, JotDB now supports a SQLite-backed store inside the Durable Object:
+
+```typescript
+const db = env.JOTDB.getByName("loop:42");
+
+await db.append("receipt", { status: "ok", body: "finished" });
+await db.appendCapped("receipt", { status: "ok", body: "finished" }, 100);
+
+const page = await db.scan("receipt:", { limit: 20 });
+const next = await db.scan("receipt:", { limit: 20, cursor: page.cursor });
+
+await db.retention("receipt:", 30 * 24 * 60 * 60 * 1000);
+```
+
+This is different from the original object-mode API. Use object mode for one bounded document per entity; use SQLite-backed collections for bounded append streams, receipts, chat history, and paginated local records. JotDB is still not a replacement for D1 joins, analytics, or cross-entity queries.
+
+For local verification, run the Worker with real workerd storage:
+
+```bash
+npx wrangler dev --local --port 8789 --var HTTP_ENABLED:1
+```
+
+The Durable Object uses `new_sqlite_classes` in `wrangler.jsonc`. SQLite mode must be chosen before first production deployment because it cannot be retrofitted onto an already-deployed non-SQLite Durable Object class.
+
 ## Demo site
 
 A deliberately minimal landing page lives in `demo/index.html`. It is meant to be the simplest possible public-facing demo before a fuller design pass. It currently communicates the core JotDB story:
