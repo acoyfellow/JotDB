@@ -15,7 +15,8 @@ export class MemoryStoreAdapter<T> implements StoreAdapter<T> {
   async keys(prefix = '') { return [...this.data.keys()].sort().filter((key) => key.startsWith(prefix)) }
   async scan(prefix = '', options: { limit?: number; cursor?: string } = {}) {
     const keys = await this.keys(prefix)
-    const start = options.cursor ? Math.max(0, keys.findIndex((key) => key > options.cursor)) : 0
+    const cursor = options.cursor
+    const start = cursor ? Math.max(0, keys.findIndex((key) => key > cursor)) : 0
     const page = keys.slice(start, options.limit ? start + options.limit : undefined)
     return { items: page.map((key) => this.data.get(key)!), cursor: page.length && page.length < keys.length ? page.at(-1) : undefined }
   }

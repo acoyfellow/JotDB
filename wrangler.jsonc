@@ -1,11 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "jotdb",
-  "main": "src/index.ts",
-  "compatibility_date": "2024-05-01",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "main": "src/site-worker.ts",
+  "assets": {
+    "directory": "./demo/dist",
+    "binding": "ASSETS"
+  },
   "durable_objects": {
     "bindings": [
       {
@@ -22,7 +22,19 @@
       ]
     }
   ],
+  "compatibility_date": "2024-05-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+
   "workers_dev": false,
+  "account_id": "bfcb6ac5b3ceaf42a09607f6f7925823",
+  "routes": [
+    {
+      "pattern": "jotdb.coey.dev/*",
+      "zone_name": "coey.dev"
+    }
+  ],
   "minify": true,
   "observability": {
     "enabled": true

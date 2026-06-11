@@ -116,7 +116,7 @@ export class JotDB extends DurableObject {
       const first = value[0];
       if (typeof first === "object" && first !== null && !Array.isArray(first)) {
         // Array of objects
-        return { __arrayType: this.inferSchemaFromValue(first) };
+        return { __arrayType: this.inferSchemaFromValue(first) as ObjectSchema };
       }
       // Array of primitives
       return { __arrayType: inferPrimitiveType(first) };
@@ -193,7 +193,7 @@ export class JotDB extends DurableObject {
       objOrArr = handleZod(() => (this.zodSchema as any).parse(objOrArr));
     } else if (!Array.isArray(objOrArr) && this.zodSchema && isObjectSchema(this.rawSchema)) {
       objOrArr = this.applyObjectDefaults(objOrArr);
-      objOrArr = handleZod(() => this.zodSchema!.parse(objOrArr));
+      objOrArr = handleZod(() => this.zodSchema!.parse(objOrArr)) as Record<string, unknown>;
     } else if (Array.isArray(objOrArr) && this.zodSchema && isObjectSchema(this.rawSchema)) {
       objOrArr.forEach(item => handleZod(() => this.zodSchema!.parse(item)));
     }
@@ -441,7 +441,7 @@ export class JotDB extends DurableObject {
         case "boolean": zt = z.boolean(); break;
         case "email": zt = z.string().email(); break;
         case "array": zt = z.array(z.any()); break;
-        case "object": zt = z.record(z.any()); break;
+        case "object": zt = z.record(z.string(), z.any()); break;
         default: zt = z.any();
       }
       const def = fieldDefault(spec);
@@ -675,7 +675,8 @@ app.get('/test', async (c) => {
     const arrSchema = await arrDb.getSchema();
     let arrPassed = false;
     if ('__arrayType' in arrSchema && typeof arrSchema.__arrayType === 'object') {
-      arrPassed = arrSchema.__arrayType.foo === "string" && arrSchema.__arrayType.count === "number";
+      const itemSchema = arrSchema.__arrayType as ObjectSchema;
+      arrPassed = itemSchema.foo === "string" && itemSchema.count === "number";
     }
     results.tests.push({
       name: "Array mode: inferred schema",
